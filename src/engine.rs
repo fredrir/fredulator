@@ -1,15 +1,21 @@
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
+
 use crate::eval::{
     apply_postfix, apply_unary, evaluate, format_number, token_display, AngleMode, BinaryOp,
     PostfixOp, Token, UnaryFunc,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub expression: String,
     pub result_text: String,
     pub result: f64,
+    #[serde(default)]
+    pub timestamp: u64,
+    #[serde(default)]
+    pub session: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -56,13 +62,18 @@ pub struct Engine {
 
 impl Engine {
     pub fn new() -> Self {
+        let cfg = crate::config::get();
+        let angle_mode = match cfg.behavior.angle_mode.as_str() {
+            "radians" => AngleMode::Radians,
+            _ => AngleMode::Degrees,
+        };
         Self {
             tokens: Vec::new(),
             buffer: String::new(),
             result: None,
             last_value: 0.0,
             memory: 0.0,
-            angle_mode: AngleMode::Degrees,
+            angle_mode,
             error: None,
             open_parens: 0,
             user_calculated: false,
@@ -100,8 +111,10 @@ impl Engine {
         }
     }
 
-    /// Try to evaluate current expression without modifying state (for live preview).
     pub fn auto_eval(&self) -> Option<String> {
+        if !crate::config::get().behavior.auto_evaluate {
+            return None;
+        }
         if self.error.is_some() || self.user_calculated {
             return None;
         }
@@ -452,8 +465,11 @@ impl Engine {
                     expression: expr_str,
                     result_text: format_number(val),
                     result: val,
+                    timestamp: crate::config::current_timestamp(),
+                    session: 0,
                 });
-                if self.history.len() > 200 {
+                let max = crate::config::get().history.max_entries;
+                if self.history.len() > max {
                     self.history.remove(0);
                 }
 

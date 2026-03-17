@@ -1,9 +1,8 @@
-/// Press 't' to cycle themes.
-/// Native mode respects your system GTK theme.
-
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext, STYLE_PROVIDER_PRIORITY_APPLICATION};
+
+use crate::config;
 
 // Shared layout
 const BASE_CSS: &str = r#"
@@ -525,6 +524,19 @@ impl Theme {
         let idx = all.iter().position(|&t| t == self).unwrap_or(0);
         all[(idx + 1) % all.len()]
     }
+
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "native" => Some(Self::Native),
+            "void" => Some(Self::Void),
+            "frosted" => Some(Self::Frosted),
+            "riced" => Some(Self::Riced),
+            "neon" => Some(Self::Neon),
+            "terminal" => Some(Self::Terminal),
+            "solarized" => Some(Self::Solarized),
+            _ => None,
+        }
+    }
 }
 
 pub struct ThemeManager {
@@ -535,10 +547,12 @@ pub struct ThemeManager {
 
 impl ThemeManager {
     pub fn new(screen: gdk::Screen) -> Self {
+        let cfg = config::get();
+        let initial = Theme::from_config_name(&cfg.theme.name).unwrap_or(Theme::Native);
         let provider = CssProvider::new();
         let mut m = Self {
             provider,
-            current: Theme::Native,
+            current: initial,
             screen,
         };
         m.apply();
@@ -560,18 +574,50 @@ impl ThemeManager {
     }
 
     fn apply(&mut self) {
+        let cfg = config::get();
         StyleContext::remove_provider_for_screen(&self.screen, &self.provider);
         self.provider = CssProvider::new();
-        let theme_css = match self.current {
-            Theme::Native => NATIVE_CSS,
-            Theme::Void => VOID_CSS,
-            Theme::Frosted => FROSTED_CSS,
-            Theme::Riced => RICED_CSS,
-            Theme::Neon => NEON_CSS,
-            Theme::Terminal => TERMINAL_CSS,
-            Theme::Solarized => SOLARIZED_CSS,
+
+        let theme_css = if cfg.theme.name == "custom" {
+            config::colors_to_css(&cfg.theme.colors)
+        } else {
+            match self.current {
+                Theme::Native => NATIVE_CSS.to_string(),
+                Theme::Void => VOID_CSS.to_string(),
+                Theme::Frosted => FROSTED_CSS.to_string(),
+                Theme::Riced => RICED_CSS.to_string(),
+                Theme::Neon => NEON_CSS.to_string(),
+                Theme::Terminal => TERMINAL_CSS.to_string(),
+                Theme::Solarized => SOLARIZED_CSS.to_string(),
+            }
         };
-        let full_css = format!("{}\n{}", BASE_CSS, theme_css);
+
+        let mut full_css = format!("{}\n{}", BASE_CSS, theme_css);
+
+        if !cfg.theme.accent_color.is_empty() {
+            full_css.push_str(&config::accent_override_css(&cfg.theme.accent_color));
+        }
+        if !cfg.theme.background_color.is_empty() {
+            full_css.push_str(&config::background_override_css(&cfg.theme.background_color));
+        }
+
+        full_css.push_str(&config::button_style_css(
+            &cfg.theme.button_style,
+            cfg.layout.button_radius,
+        ));
+
+        if cfg.theme.font != "system" && !cfg.theme.font.is_empty() {
+            full_css.push_str(&config::font_override_css(&cfg.theme.font));
+        }
+
+        full_css.push_str(&config::layout_override_css(&cfg.layout));
+        full_css.push_str(&config::feedback_css(&cfg.feedback));
+
+        if !cfg.theme.custom_css.is_empty() {
+            full_css.push('\n');
+            full_css.push_str(&cfg.theme.custom_css);
+        }
+
         self.provider.load_from_data(full_css.as_bytes()).ok();
         StyleContext::add_provider_for_screen(
             &self.screen,

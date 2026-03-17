@@ -59,6 +59,10 @@ pub struct CalculatorUI {
     pub panel_history_btn: Button,
     pub panel_memory_btn: Button,
     pub panel_pinned_btn: Button,
+    pub history_search_entry: Entry,
+    pub history_export_json_btn: Button,
+    pub history_export_csv_btn: Button,
+    pub history_clear_btn: Button,
     pub history_list: gtk::Box,
     pub memory_list: gtk::Box,
     pub pinned_list: gtk::Box,
@@ -143,9 +147,10 @@ fn eff_pos(b: &NavButton, scientific: bool) -> (usize, usize) {
 }
 
 pub fn build() -> CalculatorUI {
+    let wcfg = &crate::config::get().window;
     let window = Window::new(WindowType::Toplevel);
     window.set_title("Fredulator");
-    window.set_default_size(360, 580);
+    window.set_default_size(wcfg.default_width, wcfg.default_height);
     window.set_resizable(true);
     window.style_context().add_class("main-window");
 
@@ -291,12 +296,13 @@ pub fn build() -> CalculatorUI {
     display_box.pack_start(&result_label, true, true, 0);
     display_box.pack_start(&preview_label, false, false, 0);
 
-    // Scientific grid
-    // 3 cols x 8 rows (with memory row at top)
+    let layout_cfg = &crate::config::get().layout;
+    let spacing = layout_cfg.button_spacing as i32;
+
     let sci_grid = Grid::new();
     sci_grid.style_context().add_class("sci-grid");
-    sci_grid.set_row_spacing(6);
-    sci_grid.set_column_spacing(6);
+    sci_grid.set_row_spacing(spacing as u32);
+    sci_grid.set_column_spacing(spacing as u32);
     sci_grid.set_column_homogeneous(true);
     sci_grid.set_row_homogeneous(true);
 
@@ -465,8 +471,8 @@ pub fn build() -> CalculatorUI {
     // 4 cols x 5 rows (memory moved to scientific)
     let main_grid = Grid::new();
     main_grid.style_context().add_class("calc-grid");
-    main_grid.set_row_spacing(6);
-    main_grid.set_column_spacing(6);
+    main_grid.set_row_spacing(spacing as u32);
+    main_grid.set_column_spacing(spacing as u32);
     main_grid.set_column_homogeneous(true);
     main_grid.set_row_homogeneous(true);
 
@@ -677,6 +683,15 @@ pub fn build() -> CalculatorUI {
     let panel_stack = Stack::new();
     panel_stack.set_transition_type(StackTransitionType::Crossfade);
 
+    let history_panel = gtk::Box::new(Orientation::Vertical, 2);
+    let history_search_entry = Entry::new();
+    history_search_entry.set_placeholder_text(Some("Search history..."));
+    history_search_entry.style_context().add_class("panel-search");
+    history_search_entry.set_margin_start(4);
+    history_search_entry.set_margin_end(4);
+    history_search_entry.set_margin_top(4);
+    history_panel.pack_start(&history_search_entry, false, false, 0);
+
     let history_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     let history_list = gtk::Box::new(Orientation::Vertical, 4);
     history_list.set_margin_start(4);
@@ -685,7 +700,27 @@ pub fn build() -> CalculatorUI {
     history_empty.style_context().add_class("panel-empty");
     history_list.pack_start(&history_empty, false, false, 0);
     history_scroll.add(&history_list);
-    panel_stack.add_named(&history_scroll, "history");
+    history_panel.pack_start(&history_scroll, true, true, 0);
+
+    let history_toolbar = gtk::Box::new(Orientation::Horizontal, 2);
+    history_toolbar.set_margin_start(4);
+    history_toolbar.set_margin_end(4);
+    history_toolbar.set_margin_bottom(4);
+    let history_export_json_btn = Button::with_label("JSON");
+    history_export_json_btn.style_context().add_class("panel-tab");
+    history_export_json_btn.set_can_focus(false);
+    let history_export_csv_btn = Button::with_label("CSV");
+    history_export_csv_btn.style_context().add_class("panel-tab");
+    history_export_csv_btn.set_can_focus(false);
+    let history_clear_btn = Button::with_label("Clear");
+    history_clear_btn.style_context().add_class("panel-tab");
+    history_clear_btn.set_can_focus(false);
+    history_toolbar.pack_start(&history_export_json_btn, true, true, 0);
+    history_toolbar.pack_start(&history_export_csv_btn, true, true, 0);
+    history_toolbar.pack_end(&history_clear_btn, true, true, 0);
+    history_panel.pack_start(&history_toolbar, false, false, 0);
+
+    panel_stack.add_named(&history_panel, "history");
 
     let memory_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     let memory_list = gtk::Box::new(Orientation::Vertical, 4);
@@ -983,6 +1018,10 @@ pub fn build() -> CalculatorUI {
         panel_history_btn,
         panel_memory_btn,
         panel_pinned_btn,
+        history_search_entry,
+        history_export_json_btn,
+        history_export_csv_btn,
+        history_clear_btn,
         history_list,
         memory_list,
         pinned_list,

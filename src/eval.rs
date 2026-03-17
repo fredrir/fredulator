@@ -67,6 +67,9 @@ impl BinaryOp {
         }
     }
     fn precedence(self) -> u8 {
+        if !crate::config::get().behavior.operator_precedence {
+            return 1;
+        }
         match self {
             Self::Add | Self::Subtract => 1,
             Self::Multiply | Self::Divide | Self::Modulo => 2,
@@ -127,20 +130,71 @@ pub fn token_display(token: &Token) -> String {
 }
 
 pub fn format_number(val: f64) -> String {
+    let cfg = &crate::config::get().format;
+
     if val.is_nan() || val.is_infinite() {
         return "Error".to_string();
     }
     if val == 0.0 {
         return "0".to_string();
     }
-    if val.fract() == 0.0 && val.abs() < 1e15 {
-        return format!("{}", val as i64);
-    }
-    if val.abs() >= 1e15 || val.abs() < 1e-4 {
+
+    let use_sci = match cfg.scientific_notation.as_str() {
+        "always" => true,
+        "never" => false,
+        _ => val.abs() >= 1e15 || val.abs() < 1e-4,
+    };
+
+    if use_sci {
         return format!("{:e}", val);
     }
-    let s = format!("{:.10}", val);
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
+
+    if val.fract() == 0.0 && val.abs() < 1e15 {
+        let s = format!("{}", val as i64);
+        return add_thousands_sep(&s, &cfg.thousands_separator);
+    }
+
+    let precision = cfg.decimal_precision.min(20) as usize;
+    let s = if cfg.rounding_mode == "truncate" {
+        let factor = 10f64.powi(precision as i32);
+        let truncated = (val * factor).trunc() / factor;
+        format!("{:.prec$}", truncated, prec = precision)
+    } else {
+        format!("{:.prec$}", val, prec = precision)
+    };
+    let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+
+    if let Some(dot_pos) = s.find('.') {
+        let (int_part, dec_part) = s.split_at(dot_pos);
+        format!(
+            "{}{}",
+            add_thousands_sep(int_part, &cfg.thousands_separator),
+            dec_part
+        )
+    } else {
+        add_thousands_sep(&s, &cfg.thousands_separator)
+    }
+}
+
+fn add_thousands_sep(s: &str, sep: &str) -> String {
+    if sep.is_empty() {
+        return s.to_string();
+    }
+    let negative = s.starts_with('-');
+    let digits = if negative { &s[1..] } else { s };
+    let mut result = String::new();
+    let len = digits.len();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            result.push_str(sep);
+        }
+        result.push(ch);
+    }
+    if negative {
+        format!("-{}", result)
+    } else {
+        result
+    }
 }
 
 // --- Shunting-yard evaluator ---
@@ -506,7 +560,7 @@ pub fn parse_expression(input: &str) -> Result<Vec<Token>, String> {
                             "cbrt" => Some(UnaryFunc::Cbrt),
                             "abs" => Some(UnaryFunc::Abs),
                             "exp" => Some(UnaryFunc::Exp),
-                            "mod" => None, // handled as binary op
+                            "mod" => None,
                             _ => None,
                         };
                         if let Some(f) = func {
@@ -514,16 +568,17 @@ pub fn parse_expression(input: &str) -> Result<Vec<Token>, String> {
                                 tokens.push(Token::BinaryOp(BinaryOp::Multiply));
                             }
                             tokens.push(Token::UnaryFunc(f));
-                            // Auto-insert left paren if not already there
-                            if i < chars.len() && chars[i] == '(' {
-                                // will be handled next iteration
-                            } else {
+                            if !(i < chars.len() && chars[i] == '(') {
                                 tokens.push(Token::LeftParen);
                             }
                         } else if word_lower == "mod" {
                             tokens.push(Token::BinaryOp(BinaryOp::Modulo));
+                        } else if let Some(result) = eval_plugin_function(&word_lower, &chars, &mut i) {
+                            if need_mul {
+                                tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                            }
+                            tokens.push(Token::Number(result));
                         }
-                        // Unknown words are silently ignored
                     }
                 }
             }
@@ -544,6 +599,42 @@ pub fn parse_expression(input: &str) -> Result<Vec<Token>, String> {
     }
 
     Ok(tokens)
+}
+
+fn eval_plugin_function(name: &str, chars: &[char], i: &mut usize) -> Option<f64> {
+    let plugins = &crate::config::get().plugins.functions;
+    let expr_template = plugins.get(name)?;
+
+    if *i < chars.len() && chars[*i] == '(' {
+        *i += 1;
+        let start = *i;
+        let mut depth = 1;
+        while *i < chars.len() {
+            match chars[*i] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            *i += 1;
+        }
+        let arg_str: String = chars[start..*i].iter().collect();
+        if *i < chars.len() && chars[*i] == ')' {
+            *i += 1;
+        }
+
+        let arg_tokens = parse_expression(&arg_str).ok()?;
+        let arg_val = evaluate(&arg_tokens, AngleMode::Degrees).ok()?;
+        let substituted = expr_template.replace("x", &format!("{}", arg_val));
+        let sub_tokens = parse_expression(&substituted).ok()?;
+        evaluate(&sub_tokens, AngleMode::Degrees).ok()
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

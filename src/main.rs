@@ -1,3 +1,4 @@
+mod config;
 mod convert;
 mod engine;
 mod eval;
@@ -24,19 +25,22 @@ struct Tab {
 fn main() {
     gtk::init().expect("Failed to initialize GTK");
 
+    let cfg = config::load();
+    let session_id = config::current_timestamp();
+    config::init(cfg);
+
     let screen = gtk::gdk::Screen::default().expect("Failed to get default screen");
     let theme = Rc::new(RefCell::new(ThemeManager::new(screen)));
-    let sci_mode = Rc::new(Cell::new(false));
+    let sci_mode = Rc::new(Cell::new(config::get().layout.show_scientific));
     let current_mode = Rc::new(RefCell::new("calculator".to_string()));
     let conv_category = Rc::new(Cell::new(0usize));
+    let session = Rc::new(Cell::new(session_id));
 
-    // Multi-tab engine system
     let tabs: Rc<RefCell<Vec<Tab>>> = Rc::new(RefCell::new(Vec::new()));
     let active_tab: Rc<Cell<usize>> = Rc::new(Cell::new(0));
 
     let calc_ui = ui::build();
 
-    // Create initial tab
     {
         let mut t = tabs.borrow_mut();
         let btn = gtk::Button::with_label("Calc 1");
@@ -44,10 +48,14 @@ fn main() {
         btn.style_context().add_class("active");
         btn.set_can_focus(false);
         calc_ui.tab_bar.pack_start(&btn, false, false, 0);
-        // Reorder so tab buttons come before + and menu
         calc_ui.tab_bar.reorder_child(&btn, 0);
+        let mut engine = Engine::new();
+        let loaded = config::load_history();
+        for entry in loaded {
+            engine.history.push(entry);
+        }
         t.push(Tab {
-            engine: Engine::new(),
+            engine,
             button: btn,
             name: "Calc 1".into(),
         });
@@ -409,12 +417,14 @@ fn main() {
         let result = calc_ui.result_label.clone();
         let preview = calc_ui.preview_label.clone();
         let action = *action;
+        let session_c = session.clone();
 
         button.connect_clicked(move |btn| {
             let mut t = tabs_c.borrow_mut();
             let idx = active_c.get();
             if let Some(tab) = t.get_mut(idx) {
                 let e = &mut tab.engine;
+                let is_equals = matches!(action, ButtonAction::Equals);
                 match action {
                     ButtonAction::Digit(d) => e.input_digit(d),
                     ButtonAction::Decimal => e.input_decimal(),
@@ -440,8 +450,73 @@ fn main() {
                         });
                     }
                 }
+                if is_equals {
+                    if let Some(last) = e.history.last_mut() {
+                        last.session = session_c.get();
+                    }
+                    config::save_history(&e.history);
+                }
                 update_display(e, &expr, &result, &preview);
             }
+        });
+    }
+
+    // ==================== HISTORY PANEL BUTTONS ====================
+    {
+        let tabs_c = tabs.clone();
+        let active_c = active_tab.clone();
+        calc_ui.history_export_json_btn.connect_clicked(move |btn| {
+            let t = tabs_c.borrow();
+            if let Some(tab) = t.get(active_c.get()) {
+                let p = config::export_history_json(&tab.engine.history);
+                btn.set_label("Saved!");
+                let btn_c = btn.clone();
+                gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+                    btn_c.set_label("JSON");
+                    gtk::glib::Continue(false)
+                });
+                eprintln!("Exported: {}", p.display());
+            }
+        });
+    }
+    {
+        let tabs_c = tabs.clone();
+        let active_c = active_tab.clone();
+        calc_ui.history_export_csv_btn.connect_clicked(move |btn| {
+            let t = tabs_c.borrow();
+            if let Some(tab) = t.get(active_c.get()) {
+                let p = config::export_history_csv(&tab.engine.history);
+                btn.set_label("Saved!");
+                let btn_c = btn.clone();
+                gtk::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+                    btn_c.set_label("CSV");
+                    gtk::glib::Continue(false)
+                });
+                eprintln!("Exported: {}", p.display());
+            }
+        });
+    }
+    {
+        let tabs_c = tabs.clone();
+        let active_c = active_tab.clone();
+        let history_list = calc_ui.history_list.clone();
+        calc_ui.history_clear_btn.connect_clicked(move |_| {
+            let mut t = tabs_c.borrow_mut();
+            if let Some(tab) = t.get_mut(active_c.get()) {
+                tab.engine.clear_history();
+                config::save_history(&tab.engine.history);
+            }
+            refresh_history(&t, active_c.get(), &history_list, "");
+        });
+    }
+    {
+        let tabs_c = tabs.clone();
+        let active_c = active_tab.clone();
+        let history_list = calc_ui.history_list.clone();
+        calc_ui.history_search_entry.connect_changed(move |entry| {
+            let query = entry.text().to_string();
+            let t = tabs_c.borrow();
+            refresh_history(&t, active_c.get(), &history_list, &query);
         });
     }
 
@@ -471,6 +546,7 @@ fn main() {
         let p_memory_btn = calc_ui.panel_memory_btn.clone();
         let p_pinned_btn = calc_ui.panel_pinned_btn.clone();
         let angle_btn = calc_ui.angle_btn.clone();
+        let session_c = session.clone();
 
         calc_ui.window.connect_key_press_event(move |_, event| {
             let action = keyboard::map_key(event);
@@ -585,7 +661,7 @@ fn main() {
                 }
                 Action::ToggleHistory => {
                     toggle_panel(&panel_revealer, &panel_stack, "history", &p_history_btn, &p_memory_btn, &p_pinned_btn);
-                    refresh_history(&tabs_c.borrow(), active_c.get(), &history_list);
+                    refresh_history(&tabs_c.borrow(), active_c.get(), &history_list, "");
                     return gtk::Inhibit(true);
                 }
                 Action::ToggleMemory => {
@@ -596,6 +672,15 @@ fn main() {
                 Action::TogglePinned => {
                     toggle_panel(&panel_revealer, &panel_stack, "pinned", &p_history_btn, &p_memory_btn, &p_pinned_btn);
                     refresh_pinned(&tabs_c.borrow(), active_c.get(), &pinned_list);
+                    return gtk::Inhibit(true);
+                }
+                Action::ExportHistory => {
+                    let t = tabs_c.borrow();
+                    let idx = active_c.get();
+                    if let Some(tab) = t.get(idx) {
+                        let p = config::export_history_json(&tab.engine.history);
+                        eprintln!("History exported to {}", p.display());
+                    }
                     return gtk::Inhibit(true);
                 }
                 Action::PinResult => {
@@ -670,6 +755,7 @@ fn main() {
             let idx = active_c.get();
             if let Some(tab) = t.get_mut(idx) {
                 let e = &mut tab.engine;
+                let was_calculated = matches!(action, Action::Equals);
                 match action {
                     Action::Digit(d) => e.input_digit(d),
                     Action::Decimal => e.input_decimal(),
@@ -682,6 +768,12 @@ fn main() {
                     Action::LeftParen => e.input_left_paren(),
                     Action::RightParen => e.input_right_paren(),
                     _ => {}
+                }
+                if was_calculated {
+                    if let Some(last) = e.history.last_mut() {
+                        last.session = session_c.get();
+                    }
+                    config::save_history(&e.history);
                 }
                 update_display(e, &expr, &result, &preview);
 
@@ -697,13 +789,38 @@ fn main() {
             gtk::Inhibit(true)
         });
 
-        calc_ui.window.connect_delete_event(|_, _| {
+        let win_for_close = calc_ui.window.clone();
+        calc_ui.window.connect_delete_event(move |_, _| {
+            if config::get().window.remember_geometry {
+                let (x, y) = win_for_close.position();
+                let (w, h) = win_for_close.size();
+                config::save_geometry(x, y, w, h);
+            }
             gtk::main_quit();
             gtk::Inhibit(false)
         });
 
+        let wcfg = &config::get().window;
+        if wcfg.always_on_top {
+            calc_ui.window.set_keep_above(true);
+        }
+        if wcfg.opacity < 1.0 && wcfg.opacity > 0.0 {
+            calc_ui.window.set_opacity(wcfg.opacity);
+        }
+        if wcfg.compact_mode {
+            calc_ui.window.set_decorated(false);
+        }
+        if wcfg.remember_geometry {
+            if let Some((x, y, w, h)) = config::load_geometry() {
+                calc_ui.window.move_(x, y);
+                calc_ui.window.resize(w, h);
+            }
+        }
+
         calc_ui.window.show_all();
-        calc_ui.sci_grid.hide();
+        if !sci_mode.get() {
+            calc_ui.sci_grid.hide();
+        }
         calc_ui.panel_revealer.set_reveal_child(false);
     }
 
@@ -783,20 +900,46 @@ fn toggle_panel(
     }
 }
 
-fn refresh_history(tabs: &[Tab], active: usize, list: &gtk::Box) {
+fn refresh_history(tabs: &[Tab], active: usize, list: &gtk::Box, search: &str) {
     for child in list.children() {
         list.remove(&child);
     }
     if let Some(tab) = tabs.get(active) {
-        if tab.engine.history.is_empty() {
-            let empty = gtk::Label::new(Some("No calculations yet"));
+        let query = search.to_lowercase();
+        let filtered: Vec<_> = tab
+            .engine
+            .history
+            .iter()
+            .rev()
+            .filter(|e| {
+                query.is_empty()
+                    || e.expression.to_lowercase().contains(&query)
+                    || e.result_text.to_lowercase().contains(&query)
+            })
+            .collect();
+
+        if filtered.is_empty() {
+            let msg = if query.is_empty() {
+                "No calculations yet"
+            } else {
+                "No matching results"
+            };
+            let empty = gtk::Label::new(Some(msg));
             empty.style_context().add_class("panel-empty");
             list.pack_start(&empty, false, false, 0);
         } else {
-            for entry in tab.engine.history.iter().rev() {
+            let show_ts = config::get().history.show_timestamps;
+            for entry in filtered {
                 let item = gtk::Box::new(gtk::Orientation::Vertical, 2);
                 item.style_context().add_class("panel-item");
                 item.set_margin_bottom(2);
+
+                if show_ts && entry.timestamp > 0 {
+                    let ts_lbl = gtk::Label::new(Some(&format_timestamp(entry.timestamp)));
+                    ts_lbl.style_context().add_class("panel-item-label");
+                    ts_lbl.set_xalign(0.0);
+                    item.pack_start(&ts_lbl, false, false, 0);
+                }
 
                 let expr_lbl = gtk::Label::new(Some(&entry.expression));
                 expr_lbl.style_context().add_class("panel-item-expr");
@@ -814,6 +957,13 @@ fn refresh_history(tabs: &[Tab], active: usize, list: &gtk::Box) {
         }
     }
     list.show_all();
+}
+
+fn format_timestamp(ts: u64) -> String {
+    let secs = ts % 60;
+    let mins = (ts / 60) % 60;
+    let hours = (ts / 3600) % 24;
+    format!("{:02}:{:02}:{:02}", hours, mins, secs)
 }
 
 fn refresh_memory(tabs: &[Tab], active: usize, list: &gtk::Box) {
