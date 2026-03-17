@@ -18,13 +18,13 @@ pub struct HistoryEntry {
     pub session: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySlot {
     pub label: String,
     pub value: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PinnedCalc {
     pub label: String,
     pub expression: String,
@@ -58,6 +58,7 @@ pub struct Engine {
     pub history: Vec<HistoryEntry>,
     pub memory_slots: Vec<MemorySlot>,
     pub pinned: Vec<PinnedCalc>,
+    pub note: String,
 }
 
 impl Engine {
@@ -81,6 +82,7 @@ impl Engine {
             history: Vec::new(),
             memory_slots: Vec::new(),
             pinned: Vec::new(),
+            note: String::new(),
         }
     }
 

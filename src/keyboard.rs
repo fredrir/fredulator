@@ -38,6 +38,7 @@ pub enum Action {
     MemoryStore,
     BackToCalc,
     ExportHistory,
+    ShowHelp,
     None,
 }
 
@@ -127,6 +128,9 @@ fn event_to_combo(event: &gdk::EventKey) -> String {
     if keyval == key::space {
         return build_combo(ctrl, alt, shift, "space");
     }
+    if keyval == key::F1 {
+        return build_combo(ctrl, alt, shift, "F1");
+    }
     if keyval == key::KP_Add {
         return build_combo(ctrl, alt, false, "+");
     }
@@ -215,6 +219,7 @@ fn parse_action(name: &str) -> Option<Action> {
         "open_menu" => Some(Action::OpenMenu),
         "back_to_calc" => Some(Action::BackToCalc),
         "export_history" => Some(Action::ExportHistory),
+        "show_help" => Some(Action::ShowHelp),
         _ => None,
     }
 }
@@ -277,6 +282,9 @@ fn default_scheme() -> HashMap<String, String> {
     m.insert("Shift+Tab".into(), "prev_tab".into());
 
     m.insert("Ctrl+Shift+e".into(), "export_history".into());
+
+    m.insert("?".into(), "show_help".into());
+    m.insert("F1".into(), "show_help".into());
 
     m
 }

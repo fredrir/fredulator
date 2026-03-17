@@ -71,6 +71,7 @@ pub struct Config {
     pub feedback: FeedbackConfig,
     pub window: WindowConfig,
     pub plugins: PluginsConfig,
+    pub session: SessionConfig,
 }
 
 impl Default for Config {
@@ -86,8 +87,37 @@ impl Default for Config {
             feedback: FeedbackConfig::default(),
             window: WindowConfig::default(),
             plugins: PluginsConfig::default(),
+            session: SessionConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionConfig {
+    pub restore_session: bool,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            restore_session: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SessionState {
+    pub tabs: Vec<TabState>,
+    pub active_tab: usize,
+    pub scientific_mode: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TabState {
+    pub name: String,
+    pub note: String,
+    pub history: Vec<crate::engine::HistoryEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,6 +403,9 @@ pub fn colors_to_css(c: &ThemeColors) -> String {
 .menu-item:hover {{ background-color: {tab_active_bg}; }}
 .menu-header {{ color: {tab_fg}; }}
 
+.mode-selector button {{ background-color: {tab_bg}; color: {tab_fg}; }}
+.mode-selector button.active {{ background-color: {panel_accent}; color: {equals_fg}; }}
+
 button {{ border: none; }}
 button:focus {{ box-shadow: inset 0 0 0 2px {panel_accent}; }}
 .digit-button {{ background-color: {digit_bg}; color: {digit_fg}; font-size: 22px; }}
@@ -620,6 +653,23 @@ pub fn export_history_csv(history: &[crate::engine::HistoryEntry]) -> PathBuf {
     }
     let _ = fs::write(&p, s);
     p
+}
+
+pub fn session_path() -> PathBuf {
+    dir().join("session.json")
+}
+
+pub fn save_session(state: &SessionState) {
+    let _ = fs::create_dir_all(dir());
+    if let Ok(json) = serde_json::to_string(state) {
+        let _ = fs::write(session_path(), json);
+    }
+}
+
+pub fn load_session() -> Option<SessionState> {
+    let p = session_path();
+    let json = fs::read_to_string(p).ok()?;
+    serde_json::from_str(&json).ok()
 }
 
 pub fn current_timestamp() -> u64 {

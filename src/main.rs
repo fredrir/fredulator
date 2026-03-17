@@ -16,6 +16,24 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+const HELP_TEXT: &str = "Calculator:  0-9 digits, + - * / ^ operators\n\
+  = / Enter    Calculate\n\
+  Backspace    Delete last\n\
+  Escape       Clear / close panel\n\
+  n            Negate (+/-)\n\
+  h j k l      Vim navigation\n\
+  Space        Activate button\n\
+  s            Toggle scientific\n\
+  t            Cycle theme\n\
+  u            Undo\n\
+  ;            Open menu\n\
+  S            Store to memory\n\n\
+Tabs:  Ctrl+T new, Ctrl+W close, Tab/Shift+Tab switch\n\n\
+Panels:  Ctrl+H history, Ctrl+M memory, Ctrl+P pinned\n\
+  Ctrl+S pin result, Ctrl+Shift+E export\n\n\
+Modes:  Ctrl+E converter, Ctrl+R tools, Ctrl+N notes\n\n\
+  q quit, ? help";
+
 struct Tab {
     engine: Engine,
     button: gtk::Button,
@@ -41,7 +59,57 @@ fn main() {
 
     let calc_ui = ui::build();
 
-    {
+    let restored = if config::get().session.restore_session {
+        config::load_session()
+    } else {
+        None
+    };
+
+    if let Some(ref state) = restored {
+        let mut t = tabs.borrow_mut();
+        for (i, ts) in state.tabs.iter().enumerate() {
+            let btn = gtk::Button::with_label(&ts.name);
+            btn.style_context().add_class("tab-button");
+            btn.set_can_focus(false);
+            calc_ui.tab_bar.pack_start(&btn, false, false, 0);
+            calc_ui.tab_bar.reorder_child(&btn, i as i32);
+            let mut engine = Engine::new();
+            for entry in &ts.history {
+                engine.history.push(entry.clone());
+            }
+            engine.note = ts.note.clone();
+            if i == state.active_tab {
+                btn.style_context().add_class("active");
+            }
+            t.push(Tab {
+                engine,
+                button: btn,
+                name: ts.name.clone(),
+            });
+        }
+        if t.is_empty() {
+            let btn = gtk::Button::with_label("Calc 1");
+            btn.style_context().add_class("tab-button");
+            btn.style_context().add_class("active");
+            btn.set_can_focus(false);
+            calc_ui.tab_bar.pack_start(&btn, false, false, 0);
+            calc_ui.tab_bar.reorder_child(&btn, 0);
+            t.push(Tab {
+                engine: Engine::new(),
+                button: btn,
+                name: "Calc 1".into(),
+            });
+        }
+        let at = if state.active_tab < t.len() {
+            state.active_tab
+        } else {
+            0
+        };
+        active_tab.set(at);
+        if state.scientific_mode {
+            sci_mode.set(true);
+        }
+    } else {
         let mut t = tabs.borrow_mut();
         let btn = gtk::Button::with_label("Calc 1");
         btn.style_context().add_class("tab-button");
@@ -61,7 +129,22 @@ fn main() {
         });
     }
 
-    // Helper: get current engine
+    // Attach click handlers to initial tabs
+    {
+        let t = tabs.borrow();
+        for tab in t.iter() {
+            attach_tab_click(
+                &tab.button,
+                tabs.clone(),
+                active_tab.clone(),
+                calc_ui.expr_label.clone(),
+                calc_ui.result_label.clone(),
+                calc_ui.preview_label.clone(),
+            );
+            attach_tab_rename(&tab.button, tabs.clone());
+        }
+    }
+
     let get_engine = {
         let tabs = tabs.clone();
         let active = active_tab.clone();
@@ -73,10 +156,9 @@ fn main() {
             }
         }
     };
-    let _ = get_engine; // used below via closures
+    let _ = get_engine;
 
     // ==================== TAB MANAGEMENT ====================
-    // Add tab button
     {
         let tabs = tabs.clone();
         let active = active_tab.clone();
@@ -96,7 +178,6 @@ fn main() {
             tab_bar.reorder_child(&btn, t.len() as i32);
             btn.show();
 
-            // Deactivate old tab
             let old_idx = active.get();
             if let Some(old) = t.get(old_idx) {
                 old.button.style_context().remove_class("active");
@@ -104,13 +185,25 @@ fn main() {
 
             t.push(Tab {
                 engine: Engine::new(),
-                button: btn,
+                button: btn.clone(),
                 name,
             });
             let new_idx = t.len() - 1;
             active.set(new_idx);
             t[new_idx].button.style_context().add_class("active");
 
+            drop(t);
+            attach_tab_click(
+                &btn,
+                tabs.clone(),
+                active.clone(),
+                expr.clone(),
+                result.clone(),
+                preview.clone(),
+            );
+            attach_tab_rename(&btn, tabs.clone());
+
+            let t = tabs.borrow();
             update_display(&t[new_idx].engine, &expr, &result, &preview);
         });
     }
@@ -150,46 +243,94 @@ fn main() {
     }
 
     // ==================== MENU ACTIONS ====================
+    // Mode selector: Basic button
     {
         let sci_grid = calc_ui.sci_grid.clone();
         let window = calc_ui.window.clone();
         let sci_mode_c = sci_mode.clone();
         let popover = calc_ui.menu_popover.clone();
+        let basic_btn = calc_ui.menu_basic_btn.clone();
+        let sci_btn = calc_ui.menu_sci_btn.clone();
+        calc_ui.menu_basic_btn.connect_clicked(move |_| {
+            popover.popdown();
+            if sci_mode_c.get() {
+                sci_mode_c.set(false);
+                toggle_scientific(&sci_grid, &window, false);
+                basic_btn.style_context().add_class("active");
+                sci_btn.style_context().remove_class("active");
+            }
+        });
+    }
+    // Mode selector: Scientific button
+    {
+        let sci_grid = calc_ui.sci_grid.clone();
+        let window = calc_ui.window.clone();
+        let sci_mode_c = sci_mode.clone();
+        let popover = calc_ui.menu_popover.clone();
+        let basic_btn = calc_ui.menu_basic_btn.clone();
+        let sci_btn = calc_ui.menu_sci_btn.clone();
         calc_ui.menu_sci_btn.connect_clicked(move |_| {
             popover.popdown();
-            let mode = !sci_mode_c.get();
-            sci_mode_c.set(mode);
-            toggle_scientific(&sci_grid, &window, mode);
+            if !sci_mode_c.get() {
+                sci_mode_c.set(true);
+                toggle_scientific(&sci_grid, &window, true);
+                sci_btn.style_context().add_class("active");
+                basic_btn.style_context().remove_class("active");
+            }
+        });
+    }
+    // Help button
+    {
+        let popover = calc_ui.menu_popover.clone();
+        let window = calc_ui.window.clone();
+        calc_ui.menu_help_btn.connect_clicked(move |_| {
+            popover.popdown();
+            show_help_dialog(&window);
         });
     }
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
+        let mode_panel_stack = calc_ui.mode_panel_stack.clone();
         let current_mode = current_mode.clone();
         let popover = calc_ui.menu_popover.clone();
         calc_ui.menu_notes_btn.connect_clicked(move |_| {
             popover.popdown();
-            mode_stack.set_visible_child_name("notes");
-            *current_mode.borrow_mut() = "notes".into();
+            toggle_mode_panel(
+                &mode_panel_revealer,
+                &mode_panel_stack,
+                "notes",
+                &current_mode,
+            );
         });
     }
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
+        let mode_panel_stack = calc_ui.mode_panel_stack.clone();
         let current_mode = current_mode.clone();
         let popover = calc_ui.menu_popover.clone();
         calc_ui.menu_converter_btn.connect_clicked(move |_| {
             popover.popdown();
-            mode_stack.set_visible_child_name("converter");
-            *current_mode.borrow_mut() = "converter".into();
+            toggle_mode_panel(
+                &mode_panel_revealer,
+                &mode_panel_stack,
+                "converter",
+                &current_mode,
+            );
         });
     }
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
+        let mode_panel_stack = calc_ui.mode_panel_stack.clone();
         let current_mode = current_mode.clone();
         let popover = calc_ui.menu_popover.clone();
         calc_ui.menu_tools_btn.connect_clicked(move |_| {
             popover.popdown();
-            mode_stack.set_visible_child_name("tools");
-            *current_mode.borrow_mut() = "tools".into();
+            toggle_mode_panel(
+                &mode_panel_revealer,
+                &mode_panel_stack,
+                "tools",
+                &current_mode,
+            );
         });
     }
 
@@ -198,34 +339,43 @@ fn main() {
         let theme = theme.clone();
         let popover = calc_ui.menu_popover.clone();
         let theme_val = theme::Theme::ALL[*idx];
+        let all_btns: Vec<(gtk::Button, usize)> = calc_ui.menu_theme_btns.clone();
+        let current_idx = *idx;
         btn.connect_clicked(move |_| {
             popover.popdown();
             theme.borrow_mut().set_theme(theme_val);
+            for (b, i) in &all_btns {
+                if *i == current_idx {
+                    b.style_context().add_class("menu-item-active");
+                } else {
+                    b.style_context().remove_class("menu-item-active");
+                }
+            }
         });
     }
 
-    // Back buttons
+    // Back buttons (close mode panel)
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
         let current_mode = current_mode.clone();
         calc_ui.conv_back_btn.connect_clicked(move |_| {
-            mode_stack.set_visible_child_name("calculator");
+            mode_panel_revealer.set_reveal_child(false);
             *current_mode.borrow_mut() = "calculator".into();
         });
     }
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
         let current_mode = current_mode.clone();
         calc_ui.tools_back_btn.connect_clicked(move |_| {
-            mode_stack.set_visible_child_name("calculator");
+            mode_panel_revealer.set_reveal_child(false);
             *current_mode.borrow_mut() = "calculator".into();
         });
     }
     {
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
         let current_mode = current_mode.clone();
         calc_ui.notes_back_btn.connect_clicked(move |_| {
-            mode_stack.set_visible_child_name("calculator");
+            mode_panel_revealer.set_reveal_child(false);
             *current_mode.borrow_mut() = "calculator".into();
         });
     }
@@ -241,8 +391,14 @@ fn main() {
         let do_convert = move || {
             let val: f64 = entry.text().parse().unwrap_or(0.0);
             let category = convert::Category::ALL[cat.get()];
-            let from = from_combo.active_text().map(|s| s.to_string()).unwrap_or_default();
-            let to = to_combo.active_text().map(|s| s.to_string()).unwrap_or_default();
+            let from = from_combo
+                .active_text()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let to = to_combo
+                .active_text()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if !from.is_empty() && !to.is_empty() {
                 let result = convert::convert(category, &from, &to, val);
                 result_lbl.set_text(&eval::format_number(result));
@@ -257,7 +413,6 @@ fn main() {
         calc_ui.conv_to_combo.connect_changed(move |_| dc());
     }
 
-    // Category switching
     for (i, btn) in calc_ui.conv_cat_btns.iter().enumerate() {
         let cat = conv_category.clone();
         let from_combo = calc_ui.conv_from_combo.clone();
@@ -292,7 +447,6 @@ fn main() {
         });
     }
 
-    // Swap button
     {
         let from = calc_ui.conv_from_combo.clone();
         let to = calc_ui.conv_to_combo.clone();
@@ -305,7 +459,6 @@ fn main() {
     }
 
     // ==================== TOOLS LOGIC ====================
-    // Tip calculator
     {
         let amount_entry = calc_ui.tip_amount_entry.clone();
         let _custom_entry = calc_ui.tip_custom_entry.clone();
@@ -330,7 +483,6 @@ fn main() {
         });
     }
 
-    // Discount calculator
     {
         let price_entry = calc_ui.discount_price_entry.clone();
         let pct_entry = calc_ui.discount_pct_entry.clone();
@@ -353,7 +505,6 @@ fn main() {
         calc_ui.discount_pct_entry.connect_changed(move |_| cd());
     }
 
-    // Tax calculator
     {
         let amount_entry = calc_ui.tax_amount_entry.clone();
         let rate_entry = calc_ui.tax_rate_entry.clone();
@@ -363,11 +514,7 @@ fn main() {
             let amount: f64 = amount_entry.text().parse().unwrap_or(0.0);
             let rate: f64 = rate_entry.text().parse().unwrap_or(0.0);
             let tax = amount * rate / 100.0;
-            result_lbl.set_text(&format!(
-                "Tax: {:.2}  |  Total: {:.2}",
-                tax,
-                amount + tax
-            ));
+            result_lbl.set_text(&format!("Tax: {:.2}  |  Total: {:.2}", tax, amount + tax));
         };
 
         let ct = calc_tax.clone();
@@ -457,6 +604,7 @@ fn main() {
                     config::save_history(&e.history);
                 }
                 update_display(e, &expr, &result, &preview);
+                update_tab_preview(tab);
             }
         });
     }
@@ -535,7 +683,8 @@ fn main() {
         let nav_ref = nav_buttons.clone();
         let panel_revealer = calc_ui.panel_revealer.clone();
         let panel_stack = calc_ui.panel_stack.clone();
-        let mode_stack = calc_ui.mode_stack.clone();
+        let mode_panel_revealer = calc_ui.mode_panel_revealer.clone();
+        let mode_panel_stack = calc_ui.mode_panel_stack.clone();
         let current_mode_c = current_mode.clone();
         let tab_bar = calc_ui.tab_bar.clone();
         let menu_popover = calc_ui.menu_popover.clone();
@@ -547,6 +696,8 @@ fn main() {
         let p_pinned_btn = calc_ui.panel_pinned_btn.clone();
         let angle_btn = calc_ui.angle_btn.clone();
         let session_c = session.clone();
+        let menu_basic_btn = calc_ui.menu_basic_btn.clone();
+        let menu_sci_btn = calc_ui.menu_sci_btn.clone();
 
         calc_ui.window.connect_key_press_event(move |_, event| {
             let action = keyboard::map_key(event);
@@ -572,6 +723,13 @@ fn main() {
                     let mode = !sci_mode_c.get();
                     sci_mode_c.set(mode);
                     toggle_scientific(&sci_grid, &window, mode);
+                    if mode {
+                        menu_sci_btn.style_context().add_class("active");
+                        menu_basic_btn.style_context().remove_class("active");
+                    } else {
+                        menu_basic_btn.style_context().add_class("active");
+                        menu_sci_btn.style_context().remove_class("active");
+                    }
                     return gtk::Inhibit(true);
                 }
                 Action::Quit => {
@@ -584,6 +742,7 @@ fn main() {
                     if let Some(tab) = t.get_mut(idx) {
                         tab.engine.undo();
                         update_display(&tab.engine, &expr, &result, &preview);
+                        update_tab_preview(tab);
                     }
                     return gtk::Inhibit(true);
                 }
@@ -604,13 +763,25 @@ fn main() {
                     }
                     t.push(Tab {
                         engine: Engine::new(),
-                        button: btn,
+                        button: btn.clone(),
                         name,
                     });
                     let new_idx = t.len() - 1;
                     active_c.set(new_idx);
                     t[new_idx].button.style_context().add_class("active");
                     update_display(&t[new_idx].engine, &expr, &result, &preview);
+
+                    drop(t);
+                    attach_tab_click(
+                        &btn,
+                        tabs_c.clone(),
+                        active_c.clone(),
+                        expr.clone(),
+                        result.clone(),
+                        preview.clone(),
+                    );
+                    attach_tab_rename(&btn, tabs_c.clone());
+
                     return gtk::Inhibit(true);
                 }
                 Action::CloseTab => {
@@ -660,17 +831,38 @@ fn main() {
                     return gtk::Inhibit(true);
                 }
                 Action::ToggleHistory => {
-                    toggle_panel(&panel_revealer, &panel_stack, "history", &p_history_btn, &p_memory_btn, &p_pinned_btn);
+                    toggle_panel(
+                        &panel_revealer,
+                        &panel_stack,
+                        "history",
+                        &p_history_btn,
+                        &p_memory_btn,
+                        &p_pinned_btn,
+                    );
                     refresh_history(&tabs_c.borrow(), active_c.get(), &history_list, "");
                     return gtk::Inhibit(true);
                 }
                 Action::ToggleMemory => {
-                    toggle_panel(&panel_revealer, &panel_stack, "memory", &p_history_btn, &p_memory_btn, &p_pinned_btn);
+                    toggle_panel(
+                        &panel_revealer,
+                        &panel_stack,
+                        "memory",
+                        &p_history_btn,
+                        &p_memory_btn,
+                        &p_pinned_btn,
+                    );
                     refresh_memory(&tabs_c.borrow(), active_c.get(), &memory_list);
                     return gtk::Inhibit(true);
                 }
                 Action::TogglePinned => {
-                    toggle_panel(&panel_revealer, &panel_stack, "pinned", &p_history_btn, &p_memory_btn, &p_pinned_btn);
+                    toggle_panel(
+                        &panel_revealer,
+                        &panel_stack,
+                        "pinned",
+                        &p_history_btn,
+                        &p_memory_btn,
+                        &p_pinned_btn,
+                    );
                     refresh_pinned(&tabs_c.borrow(), active_c.get(), &pinned_list);
                     return gtk::Inhibit(true);
                 }
@@ -702,49 +894,67 @@ fn main() {
                     return gtk::Inhibit(true);
                 }
                 Action::OpenConverter => {
-                    mode_stack.set_visible_child_name("converter");
-                    *current_mode_c.borrow_mut() = "converter".into();
+                    toggle_mode_panel(
+                        &mode_panel_revealer,
+                        &mode_panel_stack,
+                        "converter",
+                        &current_mode_c,
+                    );
                     return gtk::Inhibit(true);
                 }
                 Action::OpenTools => {
-                    mode_stack.set_visible_child_name("tools");
-                    *current_mode_c.borrow_mut() = "tools".into();
+                    toggle_mode_panel(
+                        &mode_panel_revealer,
+                        &mode_panel_stack,
+                        "tools",
+                        &current_mode_c,
+                    );
                     return gtk::Inhibit(true);
                 }
                 Action::OpenNotes => {
-                    mode_stack.set_visible_child_name("notes");
-                    *current_mode_c.borrow_mut() = "notes".into();
+                    toggle_mode_panel(
+                        &mode_panel_revealer,
+                        &mode_panel_stack,
+                        "notes",
+                        &current_mode_c,
+                    );
                     return gtk::Inhibit(true);
                 }
                 Action::OpenMenu => {
                     menu_popover.popup();
                     return gtk::Inhibit(true);
                 }
+                Action::ShowHelp => {
+                    show_help_dialog(&window);
+                    return gtk::Inhibit(true);
+                }
                 Action::BackToCalc => {
                     let mode = current_mode_c.borrow().clone();
                     if mode != "calculator" {
-                        mode_stack.set_visible_child_name("calculator");
+                        mode_panel_revealer.set_reveal_child(false);
                         *current_mode_c.borrow_mut() = "calculator".into();
                         return gtk::Inhibit(true);
                     }
-                    // In calculator mode, Escape = clear
+                    if panel_revealer.reveals_child() {
+                        panel_revealer.set_reveal_child(false);
+                        return gtk::Inhibit(true);
+                    }
                     let mut t = tabs_c.borrow_mut();
                     let idx = active_c.get();
                     if let Some(tab) = t.get_mut(idx) {
                         tab.engine.clear();
                         update_display(&tab.engine, &expr, &result, &preview);
+                        update_tab_preview(tab);
                     }
                     return gtk::Inhibit(true);
                 }
                 Action::None => {
-                    // In non-calculator modes, don't intercept keys
                     if *current_mode_c.borrow() != "calculator" {
                         return gtk::Inhibit(false);
                     }
                     return gtk::Inhibit(false);
                 }
                 _ => {
-                    // For calculator input actions, only process in calculator mode
                     if *current_mode_c.borrow() != "calculator" {
                         return gtk::Inhibit(false);
                     }
@@ -754,47 +964,66 @@ fn main() {
             let mut t = tabs_c.borrow_mut();
             let idx = active_c.get();
             if let Some(tab) = t.get_mut(idx) {
-                let e = &mut tab.engine;
                 let was_calculated = matches!(action, Action::Equals);
                 match action {
-                    Action::Digit(d) => e.input_digit(d),
-                    Action::Decimal => e.input_decimal(),
-                    Action::BinaryOp(op) => e.input_binary_op(op),
-                    Action::PostfixOp(op) => e.input_postfix_op(op),
-                    Action::Equals => e.calculate(),
-                    Action::Clear => e.clear(),
-                    Action::Backspace => e.backspace(),
-                    Action::ToggleSign => e.toggle_sign(),
-                    Action::LeftParen => e.input_left_paren(),
-                    Action::RightParen => e.input_right_paren(),
+                    Action::Digit(d) => tab.engine.input_digit(d),
+                    Action::Decimal => tab.engine.input_decimal(),
+                    Action::BinaryOp(op) => tab.engine.input_binary_op(op),
+                    Action::PostfixOp(op) => tab.engine.input_postfix_op(op),
+                    Action::Equals => tab.engine.calculate(),
+                    Action::Clear => tab.engine.clear(),
+                    Action::Backspace => tab.engine.backspace(),
+                    Action::ToggleSign => tab.engine.toggle_sign(),
+                    Action::LeftParen => tab.engine.input_left_paren(),
+                    Action::RightParen => tab.engine.input_right_paren(),
                     _ => {}
                 }
                 if was_calculated {
-                    if let Some(last) = e.history.last_mut() {
+                    if let Some(last) = tab.engine.history.last_mut() {
                         last.session = session_c.get();
                     }
-                    config::save_history(&e.history);
+                    config::save_history(&tab.engine.history);
                 }
-                update_display(e, &expr, &result, &preview);
-
-                // Update angle button label if it exists
                 if let Some(ref abtn) = angle_btn {
-                    abtn.set_label(match e.angle_mode() {
+                    abtn.set_label(match tab.engine.angle_mode() {
                         AngleMode::Degrees => "Deg",
                         AngleMode::Radians => "Rad",
                     });
                 }
+                update_display(&tab.engine, &expr, &result, &preview);
+                update_tab_preview(tab);
             }
 
             gtk::Inhibit(true)
         });
 
+        // Session saving on window close
+        let tabs_for_close = tabs.clone();
+        let active_for_close = active_tab.clone();
+        let sci_for_close = sci_mode.clone();
         let win_for_close = calc_ui.window.clone();
         calc_ui.window.connect_delete_event(move |_, _| {
             if config::get().window.remember_geometry {
                 let (x, y) = win_for_close.position();
                 let (w, h) = win_for_close.size();
                 config::save_geometry(x, y, w, h);
+            }
+            if config::get().session.restore_session {
+                let t = tabs_for_close.borrow();
+                let tab_states: Vec<config::TabState> = t
+                    .iter()
+                    .map(|tab| config::TabState {
+                        name: tab.name.clone(),
+                        note: tab.engine.note.clone(),
+                        history: tab.engine.history.clone(),
+                    })
+                    .collect();
+                let state = config::SessionState {
+                    tabs: tab_states,
+                    active_tab: active_for_close.get(),
+                    scientific_mode: sci_for_close.get(),
+                };
+                config::save_session(&state);
             }
             gtk::main_quit();
             gtk::Inhibit(false)
@@ -822,20 +1051,167 @@ fn main() {
             calc_ui.sci_grid.hide();
         }
         calc_ui.panel_revealer.set_reveal_child(false);
+        calc_ui.mode_panel_revealer.set_reveal_child(false);
+
     }
 
     gtk::main();
 }
 
-fn update_display(engine: &Engine, expr: &gtk::Label, result: &gtk::Label, preview: &gtk::Label) {
+fn attach_tab_click(
+    btn: &gtk::Button,
+    tabs: Rc<RefCell<Vec<Tab>>>,
+    active: Rc<Cell<usize>>,
+    expr: gtk::Label,
+    result: gtk::Label,
+    preview: gtk::Label,
+) {
+    let tabs_c = tabs;
+    let active_c = active;
+    btn.connect_clicked(move |clicked_btn| {
+        let t = tabs_c.borrow();
+        let mut target_idx = None;
+        for (i, tab) in t.iter().enumerate() {
+            if tab.button == *clicked_btn {
+                target_idx = Some(i);
+                break;
+            }
+        }
+        if let Some(idx) = target_idx {
+            let old = active_c.get();
+            if old == idx {
+                return;
+            }
+            if let Some(old_tab) = t.get(old) {
+                old_tab.button.style_context().remove_class("active");
+            }
+            active_c.set(idx);
+            t[idx].button.style_context().add_class("active");
+            update_display(&t[idx].engine, &expr, &result, &preview);
+        }
+    });
+}
+
+fn attach_tab_rename(btn: &gtk::Button, tabs: Rc<RefCell<Vec<Tab>>>) {
+    let tabs_c = tabs;
+    btn.connect_button_press_event(move |clicked_btn, event| {
+        if event.event_type() != gtk::gdk::EventType::DoubleButtonPress {
+            return gtk::Inhibit(false);
+        }
+        let current_name = {
+            let t = tabs_c.borrow();
+            let mut name = String::new();
+            for tab in t.iter() {
+                if tab.button == *clicked_btn {
+                    name = tab.name.clone();
+                    break;
+                }
+            }
+            name
+        };
+
+        let popover = gtk::Popover::new(Some(clicked_btn));
+        let entry = gtk::Entry::new();
+        entry.set_text(&current_name);
+        entry.set_margin_top(4);
+        entry.set_margin_bottom(4);
+        entry.set_margin_start(4);
+        entry.set_margin_end(4);
+        popover.add(&entry);
+        entry.show();
+        popover.popup();
+        entry.grab_focus();
+
+        let tabs_inner = tabs_c.clone();
+        let btn_inner = clicked_btn.clone();
+        let popover_inner = popover.clone();
+        entry.connect_activate(move |e| {
+            let new_name = e.text().to_string();
+            if !new_name.is_empty() {
+                let mut t = tabs_inner.borrow_mut();
+                for tab in t.iter_mut() {
+                    if tab.button == btn_inner {
+                        tab.name = new_name.clone();
+                        tab.button.set_label(&new_name);
+                        break;
+                    }
+                }
+            }
+            popover_inner.popdown();
+        });
+
+        gtk::Inhibit(true)
+    });
+}
+
+fn update_tab_preview(tab: &Tab) {
+    let result_text = tab.engine.main_display_text();
+    let short: String = result_text.chars().take(6).collect();
+    if short != "0" {
+        tab.button.set_label(&format!("{}  {}", tab.name, short));
+    } else {
+        tab.button.set_label(&tab.name);
+    }
+}
+
+fn toggle_mode_panel(
+    revealer: &gtk::Revealer,
+    stack: &gtk::Stack,
+    name: &str,
+    current_mode: &Rc<RefCell<String>>,
+) {
+    let mode = current_mode.borrow().clone();
+    if mode == name && revealer.reveals_child() {
+        revealer.set_reveal_child(false);
+        *current_mode.borrow_mut() = "calculator".into();
+    } else {
+        stack.set_visible_child_name(name);
+        revealer.set_reveal_child(true);
+        *current_mode.borrow_mut() = name.into();
+    }
+}
+
+fn show_help_dialog(window: &gtk::Window) {
+    let dialog = gtk::Dialog::with_buttons(
+        Some("Keyboard Shortcuts"),
+        Some(window),
+        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+        &[("Close", gtk::ResponseType::Close)],
+    );
+    dialog.set_default_size(380, 440);
+    let content = dialog.content_area();
+    let scroll = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let label = gtk::Label::new(Some(HELP_TEXT));
+    label.set_xalign(0.0);
+    label.set_yalign(0.0);
+    label.set_margin_top(12);
+    label.set_margin_bottom(12);
+    label.set_margin_start(16);
+    label.set_margin_end(16);
+    label.set_selectable(true);
+    scroll.add(&label);
+    content.pack_start(&scroll, true, true, 0);
+    dialog.show_all();
+    dialog.run();
+    unsafe {
+        dialog.destroy();
+    }
+}
+
+fn update_display(
+    engine: &Engine,
+    expr: &gtk::Label,
+    result: &gtk::Label,
+    preview: &gtk::Label,
+) {
     let main_text = engine.main_display_text();
 
     let ctx = result.style_context();
     ctx.remove_class("result-medium");
     ctx.remove_class("result-small");
-    if main_text.len() > 14 {
+    if main_text.len() > 12 {
         ctx.add_class("result-small");
-    } else if main_text.len() > 8 {
+    } else if main_text.len() > 7 {
         ctx.add_class("result-medium");
     }
 
@@ -843,19 +1219,18 @@ fn update_display(engine: &Engine, expr: &gtk::Label, result: &gtk::Label, previ
 
     if engine.show_secondary() {
         expr.set_text(&engine.secondary_display_text());
-        expr.set_visible(true);
+        expr.set_opacity(1.0);
     } else {
-        expr.set_text("");
-        expr.set_visible(false);
+        expr.set_text(" ");
+        expr.set_opacity(0.0);
     }
 
-    // Auto-eval preview
     if let Some(preview_text) = engine.auto_eval() {
         preview.set_text(&format!("\u{2248} {}", preview_text));
-        preview.set_visible(true);
+        preview.set_opacity(1.0);
     } else {
-        preview.set_text("");
-        preview.set_visible(false);
+        preview.set_text(" ");
+        preview.set_opacity(0.0);
     }
 }
 
@@ -971,7 +1346,6 @@ fn refresh_memory(tabs: &[Tab], active: usize, list: &gtk::Box) {
         list.remove(&child);
     }
     if let Some(tab) = tabs.get(active) {
-        // Show quick memory
         if tab.engine.has_memory() {
             let item = gtk::Box::new(gtk::Orientation::Vertical, 2);
             item.style_context().add_class("panel-item");
@@ -984,7 +1358,9 @@ fn refresh_memory(tabs: &[Tab], active: usize, list: &gtk::Box) {
         }
 
         if tab.engine.memory_slots.is_empty() && !tab.engine.has_memory() {
-            let empty = gtk::Label::new(Some("No stored values\n\nPress S to store current value\nUse M+/M- in scientific mode"));
+            let empty = gtk::Label::new(Some(
+                "No stored values\n\nPress S to store current value\nUse M+/M- in scientific mode",
+            ));
             empty.style_context().add_class("panel-empty");
             list.pack_start(&empty, false, false, 0);
         } else {

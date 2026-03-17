@@ -6,33 +6,46 @@ use crate::config;
 
 // Shared layout
 const BASE_CSS: &str = r#"
-.display-area { padding: 12px 16px; min-height: 100px; }
-.expression-label { font-size: 16px; padding: 4px 4px; }
-.result-label { font-size: 48px; padding: 8px 4px; font-weight: 300; }
-.result-label.result-medium { font-size: 36px; }
-.result-label.result-small { font-size: 24px; }
-.preview-label { font-size: 14px; padding: 2px 4px; font-style: italic; }
+.display-area { padding: 16px 20px 8px 20px; min-height: 150px; }
+.expression-label { font-size: 16px; padding: 4px 4px; min-height: 22px; }
+.result-label { font-size: 56px; padding: 12px 4px; font-weight: 200; }
+.result-label.result-medium { font-size: 42px; }
+.result-label.result-small { font-size: 30px; }
+.preview-label { font-size: 14px; padding: 2px 4px; font-style: italic; min-height: 18px; }
 .calc-grid { margin: 4px 8px 8px 8px; }
 .sci-grid { margin: 4px 0 8px 8px; }
 button { font-size: 18px; padding: 10px; min-height: 44px; border-radius: 12px; }
-.op-button { font-size: 22px; font-weight: bold; }
-.equals-button { font-size: 22px; font-weight: bold; }
-.memory-button { font-size: 13px; min-height: 32px; }
+.op-button { font-size: 24px; font-weight: bold; }
+.equals-button { font-size: 24px; font-weight: bold; }
+.memory-button { font-size: 12px; min-height: 30px; padding: 4px; }
 .function-button { font-size: 14px; }
+.constant-button { font-size: 16px; font-weight: bold; }
+.power-button { font-size: 14px; }
+.paren-button { font-size: 16px; }
+.toggle-button { font-size: 12px; font-weight: bold; }
 .tab-bar { padding: 4px 8px 0 8px; }
-.tab-button { font-size: 13px; padding: 4px 12px; min-height: 28px; border-radius: 8px 8px 0 0; border: none; }
+.tab-button { font-size: 12px; padding: 4px 12px; min-height: 28px; border-radius: 8px 8px 0 0; border: none; }
 .tab-add { font-size: 16px; padding: 2px 10px; min-height: 28px; border-radius: 8px; border: none; }
 .menu-button { font-size: 18px; padding: 4px 10px; min-height: 28px; border-radius: 8px; border: none; }
 .menu-item { font-size: 14px; padding: 8px 16px; min-height: 28px; border-radius: 6px; border: none; }
 .menu-item:hover { opacity: 0.85; }
+.menu-item-active { font-weight: bold; }
 .menu-header { font-size: 11px; font-weight: bold; padding: 8px 16px 4px 16px; }
+.theme-dot { min-width: 12px; min-height: 12px; border-radius: 6px; margin-right: 8px; }
+.mode-selector { padding: 2px; }
+.mode-selector button { font-size: 13px; padding: 6px 16px; min-height: 28px; border-radius: 6px; border: none; opacity: 0.6; }
+.mode-selector button.active { opacity: 1.0; font-weight: bold; }
 .panel-container { min-width: 200px; padding: 0 4px; }
 .panel-tab { font-size: 12px; font-weight: bold; padding: 6px 10px; min-height: 24px; border-radius: 6px; border: none; }
+.panel-search { font-size: 12px; min-height: 24px; border-radius: 6px; padding: 4px 8px; }
 .panel-item { font-size: 13px; padding: 8px 12px; border-radius: 6px; border: none; min-height: 20px; }
 .panel-item-expr { font-size: 11px; }
 .panel-item-result { font-size: 14px; font-weight: bold; }
 .panel-item-label { font-size: 11px; font-style: italic; }
 .panel-empty { font-size: 13px; padding: 24px 12px; font-style: italic; }
+.empty-state { padding: 8px 16px; }
+.empty-state-tip { font-size: 12px; font-style: italic; }
+.tab-note { font-size: 12px; padding: 4px 8px; margin: 0 8px 4px 8px; border-radius: 6px; min-height: 24px; }
 .converter-panel { padding: 12px; }
 .converter-panel entry { font-size: 18px; padding: 8px; min-height: 36px; border-radius: 8px; }
 .converter-panel label { font-size: 14px; padding: 4px; }
@@ -50,6 +63,7 @@ button { font-size: 18px; padding: 10px; min-height: 44px; border-radius: 12px; 
 .notes-result { font-size: 14px; font-family: monospace; padding: 8px; }
 .mode-header { font-size: 16px; font-weight: bold; padding: 8px 4px; }
 .back-button { font-size: 14px; padding: 4px 12px; min-height: 28px; border-radius: 8px; border: none; }
+.mode-panel-container { min-width: 280px; padding: 0; }
 "#;
 
 // Fredrik's void
@@ -86,10 +100,22 @@ button:focus { box-shadow: inset 0 0 0 2px #ff9500; }
 .clear-button:hover { background-color: #b8b8b8; }
 .util-button { background-color: #a5a5a5; color: #000000; border-radius: 100px; }
 .util-button:hover { background-color: #b8b8b8; }
-.memory-button { background-color: #1c1c1e; color: #8e8e93; border-radius: 8px; }
-.memory-button:hover { background-color: #2c2c2e; color: #ffffff; }
+.memory-button { background-color: #1c1c1e; color: #636366; border-radius: 8px; }
+.memory-button:hover { background-color: #2c2c2e; color: #8e8e93; }
 .function-button { background-color: #1c1c1e; color: #ebebf5; border-radius: 100px; }
 .function-button:hover { background-color: #2c2c2e; }
+.constant-button { background-color: #2c2c2e; color: #ff9500; border-radius: 100px; }
+.constant-button:hover { background-color: #3c3c3e; }
+.power-button { background-color: #252527; color: #ebebf5; border-radius: 100px; }
+.power-button:hover { background-color: #333335; }
+.paren-button { background-color: #333333; color: #ffffff; border-radius: 100px; }
+.paren-button:hover { background-color: #444444; }
+.toggle-button { background-color: #1c1c1e; color: #8e8e93; border-radius: 8px; border: 1px solid #3a3a3c; }
+.toggle-button:hover { border-color: #ff9500; }
+
+.menu-item-active { background-color: #2c2c2e; color: #ff9500; }
+.mode-selector button { background-color: #1c1c1e; color: #8e8e93; }
+.mode-selector button.active { background-color: #ff9500; color: #ffffff; }
 
 .panel-container { background-color: #0a0a0a; }
 .panel-tab { background-color: #1c1c1e; color: #8e8e93; }
@@ -164,6 +190,9 @@ button:focus { box-shadow: inset 0 0 0 2px rgba(126,184,255,0.6); }
 .function-button { background-color: rgba(255,255,255,0.06); color: rgba(255,255,255,0.85); }
 .function-button:hover { background-color: rgba(255,255,255,0.12); }
 
+.mode-selector button { background-color: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); }
+.mode-selector button.active { background-color: rgba(126,184,255,0.25); color: #7eb8ff; }
+
 .panel-container { background-color: rgba(255,255,255,0.03); }
 .panel-tab { background-color: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); }
 .panel-tab.active { background-color: rgba(126,184,255,0.25); color: #7eb8ff; }
@@ -234,6 +263,9 @@ button:focus { box-shadow: inset 0 0 0 2px #cba6f7; }
 .memory-button:hover { background-color: #313244; color: #cdd6f4; }
 .function-button { background-color: #181825; color: #bac2de; border-radius: 12px; }
 .function-button:hover { background-color: #313244; }
+
+.mode-selector button { background-color: #181825; color: #6c7086; }
+.mode-selector button.active { background-color: #cba6f7; color: #1e1e2e; }
 
 .panel-container { background-color: #11111b; }
 .panel-tab { background-color: #181825; color: #6c7086; }
@@ -306,6 +338,9 @@ button:focus { box-shadow: inset 0 0 0 2px #ff0080; }
 .function-button { background-color: #0f0f2a; color: #8080b0; border-radius: 8px; }
 .function-button:hover { background-color: #1a1a3a; }
 
+.mode-selector button { background-color: #0f0f2a; color: #4a4a6a; }
+.mode-selector button.active { background-color: #ff0080; color: #ffffff; }
+
 .panel-container { background-color: #050510; }
 .panel-tab { background-color: #0f0f2a; color: #4a4a6a; }
 .panel-tab.active { background-color: #ff0080; color: #ffffff; }
@@ -377,6 +412,9 @@ button:focus { box-shadow: inset 0 0 0 2px #00ff00; }
 .function-button { background-color: #111111; color: #00aa00; border-radius: 4px; }
 .function-button:hover { background-color: #1a1a1a; }
 
+.mode-selector button { background-color: #0a0a0a; color: #338833; font-family: monospace; }
+.mode-selector button.active { background-color: #003300; color: #00ff00; }
+
 .panel-container { background-color: #050505; }
 .panel-tab { background-color: #0a0a0a; color: #338833; font-family: monospace; }
 .panel-tab.active { background-color: #003300; color: #00ff00; }
@@ -447,6 +485,9 @@ button:focus { box-shadow: inset 0 0 0 2px #268bd2; }
 .memory-button:hover { background-color: #073642; color: #93a1a1; }
 .function-button { background-color: #073642; color: #839496; border-radius: 10px; }
 .function-button:hover { background-color: #0a4a5a; }
+
+.mode-selector button { background-color: #002b36; color: #586e75; }
+.mode-selector button.active { background-color: #b58900; color: #002b36; }
 
 .panel-container { background-color: #001e27; }
 .panel-tab { background-color: #002b36; color: #586e75; }
@@ -523,6 +564,18 @@ impl Theme {
         let all = Self::ALL;
         let idx = all.iter().position(|&t| t == self).unwrap_or(0);
         all[(idx + 1) % all.len()]
+    }
+
+    pub fn accent_color(self) -> &'static str {
+        match self {
+            Self::Native => "#3584e4",
+            Self::Void => "#ff9500",
+            Self::Frosted => "#7eb8ff",
+            Self::Riced => "#cba6f7",
+            Self::Neon => "#ff0080",
+            Self::Terminal => "#00ff00",
+            Self::Solarized => "#b58900",
+        }
     }
 
     pub fn from_config_name(name: &str) -> Option<Self> {

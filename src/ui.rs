@@ -1,6 +1,6 @@
 use gtk::prelude::*;
 use gtk::{
-    Button, ComboBoxText, Entry, Grid, Label, Notebook, Orientation, Revealer,
+    Button, ComboBoxText, DrawingArea, Entry, Grid, Label, Notebook, Orientation, Revealer,
     RevealerTransitionType, ScrolledWindow, Stack, StackTransitionType, TextView, Window,
     WindowType,
 };
@@ -44,17 +44,16 @@ pub struct CalculatorUI {
     pub sci_grid: Grid,
     pub nav_buttons: Vec<NavButton>,
     pub action_buttons: Vec<(Button, ButtonAction)>,
-    // Tab bar
     pub tab_bar: gtk::Box,
     pub tab_add_btn: Button,
-    // Menu
     pub menu_popover: gtk::Popover,
+    pub menu_basic_btn: Button,
     pub menu_sci_btn: Button,
+    pub menu_help_btn: Button,
     pub menu_notes_btn: Button,
     pub menu_converter_btn: Button,
     pub menu_tools_btn: Button,
     pub menu_theme_btns: Vec<(Button, usize)>,
-    // Side panel
     pub panel_revealer: Revealer,
     pub panel_history_btn: Button,
     pub panel_memory_btn: Button,
@@ -67,9 +66,9 @@ pub struct CalculatorUI {
     pub memory_list: gtk::Box,
     pub pinned_list: gtk::Box,
     pub panel_stack: Stack,
-    // Mode stack
     pub mode_stack: Stack,
-    // Converter
+    pub mode_panel_revealer: Revealer,
+    pub mode_panel_stack: Stack,
     pub conv_value_entry: Entry,
     pub conv_from_combo: ComboBoxText,
     pub conv_to_combo: ComboBoxText,
@@ -77,7 +76,6 @@ pub struct CalculatorUI {
     pub conv_cat_btns: Vec<Button>,
     pub conv_swap_btn: Button,
     pub conv_back_btn: Button,
-    // Tools
     pub tools_notebook: Notebook,
     pub tip_amount_entry: Entry,
     pub tip_pct_btns: Vec<(Button, f64)>,
@@ -90,11 +88,9 @@ pub struct CalculatorUI {
     pub tax_rate_entry: Entry,
     pub tax_result_label: Label,
     pub tools_back_btn: Button,
-    // Notes
     pub notes_textview: TextView,
     pub notes_result_label: Label,
     pub notes_back_btn: Button,
-    // Angle button ref
     pub angle_btn: Option<Button>,
 }
 
@@ -204,9 +200,21 @@ pub fn build() -> CalculatorUI {
     menu_box.set_margin_start(8);
     menu_box.set_margin_end(8);
 
-    let menu_sci_btn = Button::with_label("\u{221a} Scientific     [s]");
-    menu_sci_btn.style_context().add_class("menu-item");
-    menu_sci_btn.set_halign(gtk::Align::Fill);
+    // Mode selector
+    let mode_selector = gtk::Box::new(Orientation::Horizontal, 2);
+    mode_selector.style_context().add_class("mode-selector");
+    let menu_basic_btn = Button::with_label("Basic");
+    menu_basic_btn.style_context().add_class("active");
+    menu_basic_btn.set_hexpand(true);
+    let menu_sci_btn = Button::with_label("Scientific");
+    menu_sci_btn.set_hexpand(true);
+    mode_selector.pack_start(&menu_basic_btn, true, true, 0);
+    mode_selector.pack_start(&menu_sci_btn, true, true, 0);
+    menu_box.pack_start(&mode_selector, false, false, 0);
+
+    let sep0 = gtk::Separator::new(Orientation::Horizontal);
+    menu_box.pack_start(&sep0, false, false, 4);
+
     let menu_notes_btn = Button::with_label("\u{270e} Math Notes     [Ctrl+n]");
     menu_notes_btn.style_context().add_class("menu-item");
     menu_notes_btn.set_halign(gtk::Align::Fill);
@@ -217,7 +225,6 @@ pub fn build() -> CalculatorUI {
     menu_tools_btn.style_context().add_class("menu-item");
     menu_tools_btn.set_halign(gtk::Align::Fill);
 
-    menu_box.pack_start(&menu_sci_btn, false, false, 0);
     menu_box.pack_start(&menu_notes_btn, false, false, 0);
     menu_box.pack_start(&menu_converter_btn, false, false, 0);
     menu_box.pack_start(&menu_tools_btn, false, false, 0);
@@ -232,12 +239,40 @@ pub fn build() -> CalculatorUI {
 
     let mut menu_theme_btns = Vec::new();
     for (i, theme) in crate::theme::Theme::ALL.iter().enumerate() {
-        let btn = Button::with_label(theme.name());
+        let row_box = gtk::Box::new(Orientation::Horizontal, 6);
+        row_box.set_margin_start(4);
+
+        let accent = theme.accent_color();
+        let dot = DrawingArea::new();
+        dot.set_size_request(12, 12);
+        dot.style_context().add_class("theme-dot");
+        let r = u8::from_str_radix(&accent[1..3], 16).unwrap_or(0) as f64 / 255.0;
+        let g = u8::from_str_radix(&accent[3..5], 16).unwrap_or(0) as f64 / 255.0;
+        let b_val = u8::from_str_radix(&accent[5..7], 16).unwrap_or(0) as f64 / 255.0;
+        dot.connect_draw(move |_, cr| {
+            cr.set_source_rgb(r, g, b_val);
+            cr.arc(6.0, 6.0, 6.0, 0.0, 2.0 * std::f64::consts::PI);
+            let _ = cr.fill();
+            gtk::Inhibit(true)
+        });
+
+        let lbl = Label::new(Some(theme.name()));
+        lbl.set_xalign(0.0);
+
+        row_box.pack_start(&dot, false, false, 0);
+        row_box.pack_start(&lbl, true, true, 0);
+
+        let btn = Button::new();
         btn.style_context().add_class("menu-item");
         btn.set_halign(gtk::Align::Fill);
+        btn.add(&row_box);
+
         menu_box.pack_start(&btn, false, false, 0);
         menu_theme_btns.push((btn, i));
     }
+
+    let sep2 = gtk::Separator::new(Orientation::Horizontal);
+    menu_box.pack_start(&sep2, false, false, 4);
 
     let shortcuts_header = Label::new(Some("PANELS"));
     shortcuts_header.style_context().add_class("menu-header");
@@ -258,6 +293,14 @@ pub fn build() -> CalculatorUI {
         menu_box.pack_start(&l, false, false, 0);
     }
 
+    let sep3 = gtk::Separator::new(Orientation::Horizontal);
+    menu_box.pack_start(&sep3, false, false, 4);
+
+    let menu_help_btn = Button::with_label("? Shortcuts");
+    menu_help_btn.style_context().add_class("menu-item");
+    menu_help_btn.set_halign(gtk::Align::Fill);
+    menu_box.pack_start(&menu_help_btn, false, false, 0);
+
     menu_box.show_all();
     menu_popover.add(&menu_box);
 
@@ -269,12 +312,12 @@ pub fn build() -> CalculatorUI {
     }
 
     // Display area
-    let expr_label = Label::new(None);
+    let expr_label = Label::new(Some(" "));
     expr_label.style_context().add_class("expression-label");
     expr_label.set_xalign(1.0);
     expr_label.set_hexpand(true);
     expr_label.set_selectable(false);
-    expr_label.set_visible(false);
+    expr_label.set_opacity(0.0);
 
     let result_label = Label::new(Some("0"));
     result_label.style_context().add_class("result-label");
@@ -283,12 +326,12 @@ pub fn build() -> CalculatorUI {
     result_label.set_vexpand(true);
     result_label.set_selectable(false);
 
-    let preview_label = Label::new(None);
+    let preview_label = Label::new(Some(" "));
     preview_label.style_context().add_class("preview-label");
     preview_label.set_xalign(1.0);
     preview_label.set_hexpand(true);
     preview_label.set_selectable(false);
-    preview_label.set_visible(false);
+    preview_label.set_opacity(0.0);
 
     let display_box = gtk::Box::new(Orientation::Vertical, 0);
     display_box.style_context().add_class("display-area");
@@ -307,7 +350,6 @@ pub fn build() -> CalculatorUI {
     sci_grid.set_row_homogeneous(true);
 
     let sci_btns: Vec<(&str, &str, ButtonAction, usize, usize)> = vec![
-        // Row 0-1: Memory
         ("MC", "memory-button", ButtonAction::MemoryClear, 0, 0),
         ("MR", "memory-button", ButtonAction::MemoryRecall, 1, 0),
         ("M+", "memory-button", ButtonAction::MemoryAdd, 2, 0),
@@ -318,54 +360,47 @@ pub fn build() -> CalculatorUI {
             0,
             1,
         ),
-        ("(", "function-button", ButtonAction::LeftParen, 1, 1),
-        (")", "function-button", ButtonAction::RightParen, 2, 1),
-        // Row 2-7: Functions
-        (
-            "Deg",
-            "function-button",
-            ButtonAction::ToggleAngleMode,
-            0,
-            2,
-        ),
+        ("(", "paren-button", ButtonAction::LeftParen, 1, 1),
+        (")", "paren-button", ButtonAction::RightParen, 2, 1),
+        ("Deg", "toggle-button", ButtonAction::ToggleAngleMode, 0, 2),
         (
             "x\u{00b2}",
-            "function-button",
+            "power-button",
             ButtonAction::PostfixOp(PostfixOp::Square),
             1,
             2,
         ),
         (
             "x\u{00b3}",
-            "function-button",
+            "power-button",
             ButtonAction::PostfixOp(PostfixOp::Cube),
             2,
             2,
         ),
         (
             "x\u{02b8}",
-            "function-button",
+            "power-button",
             ButtonAction::BinaryOp(BinaryOp::Power),
             0,
             3,
         ),
         (
             "\u{215f}x",
-            "function-button",
+            "power-button",
             ButtonAction::PostfixOp(PostfixOp::Reciprocal),
             1,
             3,
         ),
         (
             "\u{221a}",
-            "function-button",
+            "power-button",
             ButtonAction::UnaryFunc(UnaryFunc::Sqrt),
             2,
             3,
         ),
         (
             "\u{00b3}\u{221a}",
-            "function-button",
+            "power-button",
             ButtonAction::UnaryFunc(UnaryFunc::Cbrt),
             0,
             4,
@@ -414,25 +449,19 @@ pub fn build() -> CalculatorUI {
         ),
         (
             "\u{03c0}",
-            "function-button",
+            "constant-button",
             ButtonAction::Constant(std::f64::consts::PI, "\u{03c0}"),
             1,
             6,
         ),
         (
             "e",
-            "function-button",
+            "constant-button",
             ButtonAction::Constant(std::f64::consts::E, "e"),
             2,
             6,
         ),
-        (
-            "EE",
-            "function-button",
-            ButtonAction::EE,
-            0,
-            7,
-        ),
+        ("EE", "function-button", ButtonAction::EE, 0, 7),
         (
             "sin\u{207b}\u{00b9}",
             "function-button",
@@ -467,8 +496,6 @@ pub fn build() -> CalculatorUI {
         }
     }
 
-    // Main calc grid
-    // 4 cols x 5 rows (memory moved to scientific)
     let main_grid = Grid::new();
     main_grid.style_context().add_class("calc-grid");
     main_grid.set_row_spacing(spacing as u32);
@@ -476,7 +503,6 @@ pub fn build() -> CalculatorUI {
     main_grid.set_column_homogeneous(true);
     main_grid.set_row_homogeneous(true);
 
-    // Row 0: AC +/- % /
     let b = mk(
         "AC",
         "clear-button",
@@ -522,7 +548,6 @@ pub fn build() -> CalculatorUI {
     );
     main_grid.attach(&b, 3, 0, 1, 1);
 
-    // Row 1: 7 8 9 x
     for (i, d) in ['7', '8', '9'].iter().enumerate() {
         let b = mk(
             &d.to_string(),
@@ -548,7 +573,6 @@ pub fn build() -> CalculatorUI {
     );
     main_grid.attach(&b, 3, 1, 1, 1);
 
-    // Row 2: 4 5 6 -
     for (i, d) in ['4', '5', '6'].iter().enumerate() {
         let b = mk(
             &d.to_string(),
@@ -574,7 +598,6 @@ pub fn build() -> CalculatorUI {
     );
     main_grid.attach(&b, 3, 2, 1, 1);
 
-    // Row 3: 1 2 3 +
     for (i, d) in ['1', '2', '3'].iter().enumerate() {
         let b = mk(
             &d.to_string(),
@@ -600,24 +623,17 @@ pub fn build() -> CalculatorUI {
     );
     main_grid.attach(&b, 3, 3, 1, 1);
 
-    // Row 4: 0 (span 2) . =
     let d0 = mk(
         "0",
         "digit-button",
         ButtonAction::Digit('0'),
-        0,
+        1,
         4,
         false,
         &mut action_buttons,
         &mut nav_buttons,
     );
     main_grid.attach(&d0, 0, 4, 2, 1);
-    nav_buttons.push(NavButton {
-        button: d0,
-        col: 1,
-        row: 4,
-        scientific: false,
-    });
     let b = mk(
         ".",
         "digit-button",
@@ -642,7 +658,6 @@ pub fn build() -> CalculatorUI {
     main_grid.attach(&b, 3, 4, 1, 1);
 
     // Side panel
-
     let panel_revealer = Revealer::new();
     panel_revealer.set_transition_type(RevealerTransitionType::SlideRight);
     panel_revealer.set_transition_duration(200);
@@ -651,7 +666,6 @@ pub fn build() -> CalculatorUI {
     panel_container.style_context().add_class("panel-container");
     panel_container.set_size_request(200, -1);
 
-    // Panel tabs
     let panel_tabs = gtk::Box::new(Orientation::Horizontal, 2);
     panel_tabs.set_margin_top(4);
     panel_tabs.set_margin_start(4);
@@ -679,14 +693,15 @@ pub fn build() -> CalculatorUI {
 
     panel_container.pack_start(&panel_tabs, false, false, 0);
 
-    // Panel stack
     let panel_stack = Stack::new();
     panel_stack.set_transition_type(StackTransitionType::Crossfade);
 
     let history_panel = gtk::Box::new(Orientation::Vertical, 2);
     let history_search_entry = Entry::new();
     history_search_entry.set_placeholder_text(Some("Search history..."));
-    history_search_entry.style_context().add_class("panel-search");
+    history_search_entry
+        .style_context()
+        .add_class("panel-search");
     history_search_entry.set_margin_start(4);
     history_search_entry.set_margin_end(4);
     history_search_entry.set_margin_top(4);
@@ -707,10 +722,14 @@ pub fn build() -> CalculatorUI {
     history_toolbar.set_margin_end(4);
     history_toolbar.set_margin_bottom(4);
     let history_export_json_btn = Button::with_label("JSON");
-    history_export_json_btn.style_context().add_class("panel-tab");
+    history_export_json_btn
+        .style_context()
+        .add_class("panel-tab");
     history_export_json_btn.set_can_focus(false);
     let history_export_csv_btn = Button::with_label("CSV");
-    history_export_csv_btn.style_context().add_class("panel-tab");
+    history_export_csv_btn
+        .style_context()
+        .add_class("panel-tab");
     history_export_csv_btn.set_can_focus(false);
     let history_clear_btn = Button::with_label("Clear");
     history_clear_btn.style_context().add_class("panel-tab");
@@ -745,13 +764,11 @@ pub fn build() -> CalculatorUI {
     panel_container.pack_start(&panel_stack, true, true, 0);
     panel_revealer.add(&panel_container);
 
-    // Mode stack
-
+    // Mode stack (now only holds calculator)
     let mode_stack = Stack::new();
     mode_stack.set_transition_type(StackTransitionType::SlideLeftRight);
     mode_stack.set_transition_duration(200);
 
-    // --- Calculator mode ---
     let calc_view = gtk::Box::new(Orientation::Vertical, 0);
     calc_view.pack_start(&display_box, false, false, 0);
 
@@ -761,7 +778,7 @@ pub fn build() -> CalculatorUI {
     calc_view.pack_start(&grid_box, true, true, 0);
     mode_stack.add_named(&calc_view, "calculator");
 
-    // --- Converter mode ---
+    // Converter view
     let conv_view = gtk::Box::new(Orientation::Vertical, 8);
     conv_view.style_context().add_class("converter-panel");
     conv_view.set_margin_top(8);
@@ -818,7 +835,9 @@ pub fn build() -> CalculatorUI {
 
     let conv_to_box = gtk::Box::new(Orientation::Horizontal, 8);
     let conv_result_label = Label::new(Some("1"));
-    conv_result_label.style_context().add_class("converter-result");
+    conv_result_label
+        .style_context()
+        .add_class("converter-result");
     conv_result_label.set_xalign(1.0);
     conv_result_label.set_hexpand(true);
     let conv_to_combo = ComboBoxText::new();
@@ -826,7 +845,6 @@ pub fn build() -> CalculatorUI {
     conv_to_box.pack_start(&conv_to_combo, false, false, 0);
     conv_view.pack_start(&conv_to_box, false, false, 0);
 
-    // Populate default category (Length)
     for (abbr, _name) in crate::convert::Category::Length.units() {
         conv_from_combo.append_text(abbr);
         conv_to_combo.append_text(abbr);
@@ -834,9 +852,7 @@ pub fn build() -> CalculatorUI {
     conv_from_combo.set_active(Some(0));
     conv_to_combo.set_active(Some(1));
 
-    mode_stack.add_named(&conv_view, "converter");
-
-    // --- Tools mode ---
+    // Tools view
     let tools_view = gtk::Box::new(Orientation::Vertical, 8);
     tools_view.style_context().add_class("tools-panel");
     tools_view.set_margin_top(8);
@@ -855,7 +871,6 @@ pub fn build() -> CalculatorUI {
 
     let tools_notebook = Notebook::new();
 
-    // Tip Calculator
     let tip_page = gtk::Box::new(Orientation::Vertical, 8);
     tip_page.set_margin_top(12);
     tip_page.set_margin_start(8);
@@ -894,7 +909,6 @@ pub fn build() -> CalculatorUI {
 
     tools_notebook.append_page(&tip_page, Some(&Label::new(Some("Tip"))));
 
-    // Discount Calculator
     let disc_page = gtk::Box::new(Orientation::Vertical, 8);
     disc_page.set_margin_top(12);
     disc_page.set_margin_start(8);
@@ -912,12 +926,13 @@ pub fn build() -> CalculatorUI {
     discount_pct_entry.set_placeholder_text(Some("10"));
     disc_page.pack_start(&discount_pct_entry, false, false, 0);
     let discount_result_label = Label::new(Some("Save: 0  |  Final: 0"));
-    discount_result_label.style_context().add_class("tools-result");
+    discount_result_label
+        .style_context()
+        .add_class("tools-result");
     disc_page.pack_start(&discount_result_label, false, false, 8);
 
     tools_notebook.append_page(&disc_page, Some(&Label::new(Some("Discount"))));
 
-    // Tax Calculator
     let tax_page = gtk::Box::new(Orientation::Vertical, 8);
     tax_page.set_margin_top(12);
     tax_page.set_margin_start(8);
@@ -941,9 +956,8 @@ pub fn build() -> CalculatorUI {
     tools_notebook.append_page(&tax_page, Some(&Label::new(Some("Tax"))));
 
     tools_view.pack_start(&tools_notebook, true, true, 0);
-    mode_stack.add_named(&tools_view, "tools");
 
-    // Note mode
+    // Notes view
     let notes_view = gtk::Box::new(Orientation::Vertical, 8);
     notes_view.style_context().add_class("notes-panel");
     notes_view.set_margin_top(8);
@@ -975,7 +989,8 @@ pub fn build() -> CalculatorUI {
     results_label.style_context().add_class("panel-item-label");
     notes_view.pack_start(&results_label, false, false, 0);
 
-    let notes_result_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let notes_result_scroll =
+        ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     notes_result_scroll.set_min_content_height(100);
     let notes_result_label = Label::new(None);
     notes_result_label.style_context().add_class("notes-result");
@@ -985,12 +1000,31 @@ pub fn build() -> CalculatorUI {
     notes_result_scroll.add(&notes_result_label);
     notes_view.pack_start(&notes_result_scroll, true, true, 0);
 
-    mode_stack.add_named(&notes_view, "notes");
+    // Mode panel (slide-in from right for converter/tools/notes)
+    let mode_panel_stack = Stack::new();
+    mode_panel_stack.set_transition_type(StackTransitionType::Crossfade);
+    mode_panel_stack.set_transition_duration(150);
+    mode_panel_stack.add_named(&conv_view, "converter");
+    mode_panel_stack.add_named(&tools_view, "tools");
+    mode_panel_stack.add_named(&notes_view, "notes");
+
+    let mode_panel_container = gtk::Box::new(Orientation::Vertical, 0);
+    mode_panel_container
+        .style_context()
+        .add_class("mode-panel-container");
+    mode_panel_container.pack_start(&mode_panel_stack, true, true, 0);
+
+    let mode_panel_revealer = Revealer::new();
+    mode_panel_revealer.set_transition_type(RevealerTransitionType::SlideLeft);
+    mode_panel_revealer.set_transition_duration(200);
+    mode_panel_revealer.add(&mode_panel_container);
+    mode_panel_revealer.set_reveal_child(false);
 
     // Main layout
     let content_box = gtk::Box::new(Orientation::Horizontal, 0);
     content_box.pack_start(&panel_revealer, false, false, 0);
     content_box.pack_start(&mode_stack, true, true, 0);
+    content_box.pack_start(&mode_panel_revealer, false, false, 0);
 
     let vbox = gtk::Box::new(Orientation::Vertical, 0);
     vbox.pack_start(&tab_bar, false, false, 0);
@@ -1009,7 +1043,9 @@ pub fn build() -> CalculatorUI {
         tab_bar,
         tab_add_btn,
         menu_popover,
+        menu_basic_btn,
         menu_sci_btn,
+        menu_help_btn,
         menu_notes_btn,
         menu_converter_btn,
         menu_tools_btn,
@@ -1027,6 +1063,8 @@ pub fn build() -> CalculatorUI {
         pinned_list,
         panel_stack,
         mode_stack,
+        mode_panel_revealer,
+        mode_panel_stack,
         conv_value_entry,
         conv_from_combo,
         conv_to_combo,
