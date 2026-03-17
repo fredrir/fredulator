@@ -1,0 +1,85 @@
+name: Build & Update AUR
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Sy --noconfirm base-devel git rust cargo namcap openssh sudo
+
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Checkout repo
+        run: |
+          sudo -u builder git clone https://github.com/fredrir/fredulator.git /home/builder/repo
+
+      - name: Setup SSH for AUR
+        run: |
+          mkdir -p /home/builder/.ssh
+          echo "${{ secrets.AUR_SSH_KEY }}" > /home/builder/.ssh/id_ed25519
+          chmod 600 /home/builder/.ssh/id_ed25519
+          ssh-keyscan aur.archlinux.org >> /home/builder/.ssh/known_hosts
+          chown -R builder:builder /home/builder/.ssh
+
+      - name: Build package
+        run: |
+          sudo -u builder bash -c "
+            cd /home/builder/repo
+            makepkg -s --noconfirm --cleanbuild --clean
+          "
+
+      - name: Run namcap
+        run: |
+          sudo -u builder bash -c '
+            set -e
+            cd /home/builder/repo
+
+            namcap PKGBUILD | tee namcap-pkgbuild.log
+            namcap *.pkg.tar.zst | tee namcap-package.log
+
+            cat namcap-pkgbuild.log namcap-package.log > namcap-all.log
+
+            echo "==== Full namcap output ===="
+            cat namcap-all.log
+
+            if grep -Ei "error:" namcap-all.log; then
+              echo "Serious namcap errors found."
+              exit 1
+            fi
+          '
+
+      - name: Clone AUR repo
+        run: |
+          sudo -u builder git clone ssh://aur@aur.archlinux.org/fredulator-git.git /home/builder/aur
+
+      - name: Update AUR repo
+        run: |
+          sudo -u builder bash -c "
+            cd /home/builder/repo
+            cp PKGBUILD /home/builder/aur/
+            makepkg --printsrcinfo > /home/builder/aur/.SRCINFO
+          "
+
+      - name: Commit and push
+        run: |
+          sudo -u builder bash -c "
+            cd /home/builder/aur
+            git config user.name 'fredrir'
+            git config user.email 'fhansteen@gmail.com'
+            git add PKGBUILD .SRCINFO
+            git commit -m 'Auto update from GitHub' || exit 0
+            git push
+          "
