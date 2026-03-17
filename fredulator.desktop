@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Fredulator
+Comment=Calculator with vim motions
+Exec=fredulator
+Icon=accessories-calculator
+Terminal=false
+Type=Application
+Categories=Utility;Calculator;GTK;
+Keywords=calculator;math;scientific;

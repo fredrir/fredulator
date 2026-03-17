@@ -1,21 +1,24 @@
 use gtk::gdk;
 use gtk::gdk::keys::constants as key;
 
-use crate::engine::Operation;
+use crate::eval::{BinaryOp, PostfixOp};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Action {
     Digit(char),
     Decimal,
-    SetOperation(Operation),
+    BinaryOp(BinaryOp),
+    PostfixOp(PostfixOp),
     Equals,
     Clear,
     Backspace,
     ToggleSign,
-    Percent,
+    LeftParen,
+    RightParen,
     Navigate(Direction),
     Activate,
     ToggleTheme,
+    ToggleScientific,
     Quit,
     None,
 }
@@ -29,22 +32,25 @@ pub enum Direction {
 }
 
 /// Keyboard layout:
-///   0-9          digits
-///   + - * /      operations (also numpad variants)
+///   0-9          digits (also numpad)
+///   + - * /      operations
+///   ^            power
+///   ( )          parentheses
 ///   .            decimal point
 ///   = / Enter    equals
 ///   Escape       clear (AC)
-///   Backspace    delete last digit
+///   Backspace    delete last entry
 ///   %            percent
+///   !            factorial
 ///   n            negate (+/-)
 ///   h/j/k/l      vim navigation (also arrow keys)
 ///   Space        activate focused button
-///   t            toggle theme (native / dark)
+///   t            toggle theme
+///   s            toggle scientific mode
 ///   q            quit
 pub fn map_key(event: &gdk::EventKey) -> Action {
     let keyval = event.keyval();
 
-    // Special keys (no unicode representation)
     if keyval == key::Return || keyval == key::KP_Enter {
         return Action::Equals;
     }
@@ -70,19 +76,24 @@ pub fn map_key(event: &gdk::EventKey) -> Action {
     if let Some(ch) = keyval.to_unicode() {
         return match ch {
             '0'..='9' => Action::Digit(ch),
-            '+' => Action::SetOperation(Operation::Add),
-            '-' => Action::SetOperation(Operation::Subtract),
-            '*' => Action::SetOperation(Operation::Multiply),
-            '/' => Action::SetOperation(Operation::Divide),
+            '+' => Action::BinaryOp(BinaryOp::Add),
+            '-' => Action::BinaryOp(BinaryOp::Subtract),
+            '*' => Action::BinaryOp(BinaryOp::Multiply),
+            '/' => Action::BinaryOp(BinaryOp::Divide),
+            '^' => Action::BinaryOp(BinaryOp::Power),
+            '(' => Action::LeftParen,
+            ')' => Action::RightParen,
             '.' => Action::Decimal,
             '=' => Action::Equals,
-            '%' => Action::Percent,
+            '%' => Action::PostfixOp(PostfixOp::Percent),
+            '!' => Action::PostfixOp(PostfixOp::Factorial),
             'h' => Action::Navigate(Direction::Left),
             'j' => Action::Navigate(Direction::Down),
             'k' => Action::Navigate(Direction::Up),
             'l' => Action::Navigate(Direction::Right),
             'n' => Action::ToggleSign,
             't' => Action::ToggleTheme,
+            's' => Action::ToggleScientific,
             'q' => Action::Quit,
             ' ' => Action::Activate,
             _ => Action::None,
