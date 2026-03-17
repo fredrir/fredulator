@@ -197,10 +197,10 @@ impl Engine {
         if self.error.is_some() { return; }
         self.save_snapshot();
         self.start_fresh_if_needed();
-        if self.buffer.is_empty() {
-            if matches!(self.tokens.last(), Some(Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))) {
-                self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
-            }
+        if self.buffer.is_empty()
+            && matches!(self.tokens.last(), Some(Token::Constant(..) | Token::RightParen | Token::PostfixOp(_)))
+        {
+            self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
         }
         if digit == '0' && (self.buffer == "0" || self.buffer == "-0") { return; }
         if digit != '0' && self.buffer == "0" { self.buffer.clear(); }

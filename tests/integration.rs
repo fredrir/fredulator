@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("fredulator_test_{}", name));
@@ -22,13 +22,13 @@ mod history_io {
         session: u64,
     }
 
-    fn save_history_to(dir: &PathBuf, history: &[HistoryEntry]) {
+    fn save_history_to(dir: &Path, history: &[HistoryEntry]) {
         let p = dir.join("history.json");
         let json = serde_json::to_string(history).unwrap();
         fs::write(p, json).unwrap();
     }
 
-    fn load_history_from(dir: &PathBuf) -> Vec<HistoryEntry> {
+    fn load_history_from(dir: &Path) -> Vec<HistoryEntry> {
         let p = dir.join("history.json");
         match fs::read_to_string(p) {
             Ok(json) => serde_json::from_str(&json).unwrap_or_default(),

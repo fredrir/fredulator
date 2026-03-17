@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn format_decimal() {
-        assert_eq!(format_number_default(3.14), "3.14");
+        assert_eq!(format_number_default(3.15), "3.15");
     }
 
     #[test]

@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn simple_decimal() {
-        assert_eq!(format_number(3.14, &default_settings()), "3.14");
+        assert_eq!(format_number(3.15, &default_settings()), "3.15");
     }
 
     #[test]
