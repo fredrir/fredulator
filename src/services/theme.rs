@@ -2,9 +2,8 @@ use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext, STYLE_PROVIDER_PRIORITY_APPLICATION};
 
-use crate::config;
+use crate::services::config::{FeedbackConfig, LayoutConfig, ThemeColors, ThemeConfig};
 
-// Shared layout
 const BASE_CSS: &str = r#"
 .display-area { padding: 16px 20px 8px 20px; min-height: 150px; }
 .expression-label { font-size: 16px; padding: 4px 4px; min-height: 22px; }
@@ -66,7 +65,6 @@ button { font-size: 18px; padding: 10px; min-height: 44px; border-radius: 12px; 
 .mode-panel-container { min-width: 280px; padding: 0; }
 "#;
 
-// Fredrik's void
 const VOID_CSS: &str = r#"
 .main-window { background-color: #000000; }
 .display-area { background-color: #000000; }
@@ -153,7 +151,6 @@ button:focus { box-shadow: inset 0 0 0 2px #ff9500; }
 .back-button:hover { background-color: #444444; }
 "#;
 
-// Frosted Fred
 const FROSTED_CSS: &str = r#"
 .main-window { background-color: #1a1a2e; }
 .display-area { background-color: rgba(255,255,255,0.05); border-radius: 16px; margin: 8px; }
@@ -227,7 +224,6 @@ button:focus { box-shadow: inset 0 0 0 2px rgba(126,184,255,0.6); }
 .back-button { background-color: rgba(255,255,255,0.1); color: #ffffff; }
 "#;
 
-// Riced Fredulator
 const RICED_CSS: &str = r#"
 .main-window { background-color: #1e1e2e; }
 .display-area { background-color: #1e1e2e; }
@@ -301,7 +297,6 @@ button:focus { box-shadow: inset 0 0 0 2px #cba6f7; }
 .back-button { background-color: #313244; color: #cdd6f4; }
 "#;
 
-//Neon Fredrik
 const NEON_CSS: &str = r#"
 .main-window { background-color: #0a0a1a; }
 .display-area { background-color: #0a0a1a; }
@@ -375,7 +370,6 @@ button:focus { box-shadow: inset 0 0 0 2px #ff0080; }
 .back-button { background-color: #1a1a3a; color: #00ffff; }
 "#;
 
-// Terminal Fred
 const TERMINAL_CSS: &str = r#"
 .main-window { background-color: #0a0a0a; }
 .display-area { background-color: #0a0a0a; }
@@ -449,7 +443,6 @@ button:focus { box-shadow: inset 0 0 0 2px #00ff00; }
 .back-button { background-color: #1a1a1a; color: #00ff00; font-family: monospace; }
 "#;
 
-// Solarized Fred
 const SOLARIZED_CSS: &str = r#"
 .main-window { background-color: #002b36; }
 .display-area { background-color: #002b36; }
@@ -523,7 +516,6 @@ button:focus { box-shadow: inset 0 0 0 2px #268bd2; }
 .back-button { background-color: #073642; color: #93a1a1; }
 "#;
 
-// Native
 const NATIVE_CSS: &str = "";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -538,18 +530,6 @@ pub enum Theme {
 }
 
 impl Theme {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Native => "Native",
-            Self::Void => "Fredrik's Void",
-            Self::Frosted => "Frosted Fred",
-            Self::Riced => "Riced Fredulator",
-            Self::Neon => "Neon Fredrik",
-            Self::Terminal => "Terminal Fred",
-            Self::Solarized => "Solarized Fred",
-        }
-    }
-
     pub const ALL: &'static [Theme] = &[
         Self::Native,
         Self::Void,
@@ -560,10 +540,16 @@ impl Theme {
         Self::Solarized,
     ];
 
-    pub fn next(self) -> Self {
-        let all = Self::ALL;
-        let idx = all.iter().position(|&t| t == self).unwrap_or(0);
-        all[(idx + 1) % all.len()]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Native => "Native",
+            Self::Void => "Void",
+            Self::Frosted => "Frosted",
+            Self::Riced => "Riced",
+            Self::Neon => "Neon",
+            Self::Terminal => "Terminal",
+            Self::Solarized => "Solarized",
+        }
     }
 
     pub fn accent_color(self) -> &'static str {
@@ -590,6 +576,224 @@ impl Theme {
             _ => None,
         }
     }
+
+    pub fn next(self) -> Self {
+        let all = Self::ALL;
+        let idx = all.iter().position(|&t| t == self).unwrap_or(0);
+        all[(idx + 1) % all.len()]
+    }
+}
+
+pub fn colors_to_css(c: &ThemeColors) -> String {
+    format!(
+        r#"
+.main-window {{ background-color: {window_bg}; }}
+.display-area {{ background-color: {display_bg}; }}
+.expression-label {{ color: {display_secondary}; }}
+.result-label {{ color: {display_fg}; }}
+.preview-label {{ color: {display_preview}; }}
+
+.tab-bar {{ background-color: {window_bg}; }}
+.tab-button {{ background-color: {tab_bg}; color: {tab_fg}; }}
+.tab-button.active {{ background-color: {tab_active_bg}; color: {tab_active_fg}; }}
+.tab-add {{ background-color: transparent; color: {tab_fg}; }}
+.tab-add:hover {{ color: {tab_active_fg}; }}
+.menu-button {{ background-color: transparent; color: {tab_fg}; }}
+.menu-button:hover {{ color: {tab_active_fg}; }}
+
+.menu-item {{ background-color: {tab_bg}; color: {panel_fg}; }}
+.menu-item:hover {{ background-color: {tab_active_bg}; }}
+.menu-header {{ color: {tab_fg}; }}
+
+.mode-selector button {{ background-color: {tab_bg}; color: {tab_fg}; }}
+.mode-selector button.active {{ background-color: {panel_accent}; color: {equals_fg}; }}
+
+button {{ border: none; }}
+button:focus {{ box-shadow: inset 0 0 0 2px {panel_accent}; }}
+.digit-button {{ background-color: {digit_bg}; color: {digit_fg}; font-size: 22px; }}
+.digit-button:hover {{ opacity: 0.85; }}
+.op-button {{ background-color: {op_bg}; color: {op_fg}; font-size: 26px; }}
+.op-button:hover {{ opacity: 0.85; }}
+.equals-button {{ background-color: {equals_bg}; color: {equals_fg}; font-size: 26px; }}
+.equals-button:hover {{ opacity: 0.85; }}
+.clear-button {{ background-color: {clear_bg}; color: {clear_fg}; }}
+.clear-button:hover {{ opacity: 0.85; }}
+.util-button {{ background-color: {util_bg}; color: {util_fg}; }}
+.util-button:hover {{ opacity: 0.85; }}
+.memory-button {{ background-color: {memory_bg}; color: {memory_fg}; }}
+.memory-button:hover {{ opacity: 0.85; }}
+.function-button {{ background-color: {function_bg}; color: {function_fg}; }}
+.function-button:hover {{ opacity: 0.85; }}
+
+.panel-container {{ background-color: {panel_bg}; }}
+.panel-tab {{ background-color: {tab_bg}; color: {tab_fg}; }}
+.panel-tab.active {{ background-color: {panel_accent}; color: {equals_fg}; }}
+.panel-item {{ background-color: {tab_bg}; color: {panel_fg}; }}
+.panel-item:hover {{ background-color: {tab_active_bg}; }}
+.panel-item-expr {{ color: {display_secondary}; }}
+.panel-item-result {{ color: {panel_accent}; }}
+.panel-item-label {{ color: {tab_fg}; }}
+.panel-empty {{ color: {tab_fg}; }}
+
+.converter-panel {{ background-color: {window_bg}; }}
+.converter-panel entry {{ background-color: {tab_bg}; color: {display_fg}; border: 1px solid {digit_bg}; }}
+.converter-panel label {{ color: {panel_fg}; }}
+.converter-cat-btn {{ background-color: {tab_bg}; color: {tab_fg}; }}
+.converter-cat-btn.active {{ background-color: {panel_accent}; color: {equals_fg}; }}
+.converter-result {{ color: {panel_accent}; }}
+.converter-swap {{ background-color: {digit_bg}; color: {display_fg}; }}
+
+.tools-panel {{ background-color: {window_bg}; }}
+.tools-panel entry {{ background-color: {tab_bg}; color: {display_fg}; border: 1px solid {digit_bg}; }}
+.tools-panel label {{ color: {panel_fg}; }}
+.tools-result {{ color: {panel_accent}; }}
+.tools-pct-btn {{ background-color: {tab_bg}; color: {panel_fg}; }}
+.tools-pct-btn.active {{ background-color: {panel_accent}; color: {equals_fg}; }}
+
+.notes-panel {{ background-color: {window_bg}; }}
+.notes-panel textview {{ background-color: {tab_bg}; color: {display_fg}; border: 1px solid {digit_bg}; }}
+.notes-panel textview text {{ background-color: {tab_bg}; color: {display_fg}; }}
+.notes-result {{ background-color: {panel_bg}; color: {panel_accent}; }}
+
+.mode-header {{ color: {display_fg}; }}
+.back-button {{ background-color: {digit_bg}; color: {display_fg}; }}
+"#,
+        window_bg = c.window_bg,
+        display_bg = c.display_bg,
+        display_fg = c.display_fg,
+        display_secondary = c.display_secondary,
+        display_preview = c.display_preview,
+        digit_bg = c.digit_bg,
+        digit_fg = c.digit_fg,
+        op_bg = c.op_bg,
+        op_fg = c.op_fg,
+        equals_bg = c.equals_bg,
+        equals_fg = c.equals_fg,
+        clear_bg = c.clear_bg,
+        clear_fg = c.clear_fg,
+        util_bg = c.util_bg,
+        util_fg = c.util_fg,
+        function_bg = c.function_bg,
+        function_fg = c.function_fg,
+        memory_bg = c.memory_bg,
+        memory_fg = c.memory_fg,
+        panel_bg = c.panel_bg,
+        panel_fg = c.panel_fg,
+        panel_accent = c.panel_accent,
+        tab_bg = c.tab_bg,
+        tab_fg = c.tab_fg,
+        tab_active_bg = c.tab_active_bg,
+        tab_active_fg = c.tab_active_fg,
+    )
+}
+
+pub fn accent_override_css(accent: &str) -> String {
+    format!(
+        r#"
+.op-button {{ background-color: {0}; }}
+.equals-button {{ background-color: {0}; }}
+.panel-tab.active {{ background-color: {0}; }}
+.converter-cat-btn.active {{ background-color: {0}; }}
+.panel-item-result {{ color: {0}; }}
+.converter-result {{ color: {0}; }}
+.tools-result {{ color: {0}; }}
+.notes-result {{ color: {0}; }}
+button:focus {{ box-shadow: inset 0 0 0 2px {0}; }}
+.tab-button.active {{ color: {0}; }}
+.tab-add:hover {{ color: {0}; }}
+.menu-button:hover {{ color: {0}; }}
+"#,
+        accent
+    )
+}
+
+pub fn background_override_css(bg: &str) -> String {
+    format!(
+        r#"
+.main-window {{ background-color: {0}; }}
+.display-area {{ background-color: {0}; }}
+.converter-panel {{ background-color: {0}; }}
+.tools-panel {{ background-color: {0}; }}
+.notes-panel {{ background-color: {0}; }}
+"#,
+        bg
+    )
+}
+
+pub fn font_override_css(font: &str) -> String {
+    format!("* {{ font-family: {}; }}\n", font)
+}
+
+pub fn button_style_css(style: &str, radius: u32) -> String {
+    match style {
+        "flat" => "button { border-radius: 0; }\n\
+                   .digit-button { border-radius: 0; }\n\
+                   .op-button { border-radius: 0; }\n\
+                   .equals-button { border-radius: 0; }\n\
+                   .clear-button { border-radius: 0; }\n\
+                   .util-button { border-radius: 0; }\n\
+                   .function-button { border-radius: 0; }\n\
+                   .memory-button { border-radius: 0; }\n"
+            .to_string(),
+        "outlined" => format!(
+            ".digit-button {{ background-color: transparent; border: 1px solid currentColor; border-radius: {0}px; }}\n\
+             .function-button {{ background-color: transparent; border: 1px solid currentColor; border-radius: {0}px; }}\n\
+             .memory-button {{ background-color: transparent; border: 1px solid currentColor; border-radius: {0}px; }}\n",
+            radius
+        ),
+        _ => format!(
+            "button {{ border-radius: {0}px; }}\n\
+             .digit-button {{ border-radius: {0}px; }}\n\
+             .op-button {{ border-radius: {0}px; }}\n\
+             .equals-button {{ border-radius: {0}px; }}\n\
+             .clear-button {{ border-radius: {0}px; }}\n\
+             .util-button {{ border-radius: {0}px; }}\n\
+             .function-button {{ border-radius: {0}px; }}\n\
+             .memory-button {{ border-radius: {0}px; }}\n",
+            radius
+        ),
+    }
+}
+
+pub fn layout_override_css(layout: &LayoutConfig) -> String {
+    let mut css = String::new();
+
+    let btn_size = match layout.button_size.as_str() {
+        "small" => "min-height: 36px; font-size: 16px;",
+        "large" => "min-height: 56px; font-size: 22px;",
+        _ => "",
+    };
+    if !btn_size.is_empty() {
+        css.push_str(&format!("button {{ {} }}\n", btn_size));
+    }
+
+    css.push_str(&format!(
+        ".calc-grid {{ margin: {p}px; }}\n\
+         .sci-grid {{ margin: {p}px 0 {p}px {p}px; }}\n",
+        p = layout.grid_padding
+    ));
+
+    if layout.compact_mode {
+        css.push_str(
+            ".display-area { padding: 4px 8px; min-height: 60px; }\n\
+             .result-label { font-size: 36px; padding: 4px; }\n\
+             .expression-label { font-size: 12px; }\n\
+             .preview-label { font-size: 12px; }\n\
+             .tab-bar { padding: 2px 4px 0 4px; }\n\
+             button { padding: 4px; min-height: 32px; }\n",
+        );
+    }
+
+    css
+}
+
+pub fn feedback_css(feedback: &FeedbackConfig) -> String {
+    if !feedback.animations {
+        return "* { transition-duration: 0s; }\n\
+                .panel-revealer { transition-duration: 0s; }\n"
+            .to_string();
+    }
+    String::new()
 }
 
 pub struct ThemeManager {
@@ -599,16 +803,20 @@ pub struct ThemeManager {
 }
 
 impl ThemeManager {
-    pub fn new(screen: gdk::Screen) -> Self {
-        let cfg = config::get();
-        let initial = Theme::from_config_name(&cfg.theme.name).unwrap_or(Theme::Native);
+    pub fn new(
+        screen: gdk::Screen,
+        theme_config: &ThemeConfig,
+        layout_config: &LayoutConfig,
+        feedback_config: &FeedbackConfig,
+    ) -> Self {
+        let initial = Theme::from_config_name(&theme_config.name).unwrap_or(Theme::Native);
         let provider = CssProvider::new();
         let mut m = Self {
             provider,
             current: initial,
             screen,
         };
-        m.apply();
+        m.apply(theme_config, layout_config, feedback_config);
         m
     }
 
@@ -616,23 +824,38 @@ impl ThemeManager {
         self.current
     }
 
-    pub fn set_theme(&mut self, theme: Theme) {
+    pub fn set_theme(
+        &mut self,
+        theme: Theme,
+        theme_config: &ThemeConfig,
+        layout_config: &LayoutConfig,
+        feedback_config: &FeedbackConfig,
+    ) {
         self.current = theme;
-        self.apply();
+        self.apply(theme_config, layout_config, feedback_config);
     }
 
-    pub fn toggle(&mut self) {
+    pub fn toggle(
+        &mut self,
+        theme_config: &ThemeConfig,
+        layout_config: &LayoutConfig,
+        feedback_config: &FeedbackConfig,
+    ) {
         self.current = self.current.next();
-        self.apply();
+        self.apply(theme_config, layout_config, feedback_config);
     }
 
-    fn apply(&mut self) {
-        let cfg = config::get();
+    pub fn apply(
+        &mut self,
+        theme_config: &ThemeConfig,
+        layout_config: &LayoutConfig,
+        feedback_config: &FeedbackConfig,
+    ) {
         StyleContext::remove_provider_for_screen(&self.screen, &self.provider);
         self.provider = CssProvider::new();
 
-        let theme_css = if cfg.theme.name == "custom" {
-            config::colors_to_css(&cfg.theme.colors)
+        let theme_css = if theme_config.name == "custom" {
+            colors_to_css(&theme_config.colors)
         } else {
             match self.current {
                 Theme::Native => NATIVE_CSS.to_string(),
@@ -647,28 +870,28 @@ impl ThemeManager {
 
         let mut full_css = format!("{}\n{}", BASE_CSS, theme_css);
 
-        if !cfg.theme.accent_color.is_empty() {
-            full_css.push_str(&config::accent_override_css(&cfg.theme.accent_color));
+        if !theme_config.accent_color.is_empty() {
+            full_css.push_str(&accent_override_css(&theme_config.accent_color));
         }
-        if !cfg.theme.background_color.is_empty() {
-            full_css.push_str(&config::background_override_css(&cfg.theme.background_color));
+        if !theme_config.background_color.is_empty() {
+            full_css.push_str(&background_override_css(&theme_config.background_color));
         }
 
-        full_css.push_str(&config::button_style_css(
-            &cfg.theme.button_style,
-            cfg.layout.button_radius,
+        full_css.push_str(&button_style_css(
+            &theme_config.button_style,
+            layout_config.button_radius,
         ));
 
-        if cfg.theme.font != "system" && !cfg.theme.font.is_empty() {
-            full_css.push_str(&config::font_override_css(&cfg.theme.font));
+        if theme_config.font != "system" && !theme_config.font.is_empty() {
+            full_css.push_str(&font_override_css(&theme_config.font));
         }
 
-        full_css.push_str(&config::layout_override_css(&cfg.layout));
-        full_css.push_str(&config::feedback_css(&cfg.feedback));
+        full_css.push_str(&layout_override_css(layout_config));
+        full_css.push_str(&feedback_css(feedback_config));
 
-        if !cfg.theme.custom_css.is_empty() {
+        if !theme_config.custom_css.is_empty() {
             full_css.push('\n');
-            full_css.push_str(&cfg.theme.custom_css);
+            full_css.push_str(&theme_config.custom_css);
         }
 
         self.provider.load_from_data(full_css.as_bytes()).ok();

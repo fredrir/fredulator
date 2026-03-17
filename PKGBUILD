@@ -3,7 +3,7 @@ pkgname=fredulator-git
 _pkgname=fredulator
 pkgver=r0.0000000
 pkgrel=1
-pkgdesc='GTK calculator with vim motions and native Linux theme support'
+pkgdesc='GTK calculator with vim motions, multi-tab support, and Elm-style architecture'
 arch=('x86_64' 'aarch64')
 url='https://github.com/fredrir/fredulator'
 license=('MIT')
@@ -29,6 +29,12 @@ build() {
     cd "$_pkgname"
     export RUSTUP_TOOLCHAIN=stable
     cargo build --release
+}
+
+check() {
+    cd "$_pkgname"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --release
 }
 
 package() {

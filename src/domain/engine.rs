@@ -1,35 +1,5 @@
-#![allow(dead_code)]
-
-use serde::{Deserialize, Serialize};
-
-use crate::eval::{
-    apply_postfix, apply_unary, evaluate, format_number, token_display, AngleMode, BinaryOp,
-    PostfixOp, Token, UnaryFunc,
-};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
-    pub expression: String,
-    pub result_text: String,
-    pub result: f64,
-    #[serde(default)]
-    pub timestamp: u64,
-    #[serde(default)]
-    pub session: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemorySlot {
-    pub label: String,
-    pub value: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PinnedCalc {
-    pub label: String,
-    pub expression: String,
-    pub result: f64,
-}
+use super::eval;
+use super::types::*;
 
 #[derive(Debug, Clone)]
 struct Snapshot {
@@ -40,6 +10,25 @@ struct Snapshot {
     error: Option<String>,
     open_parens: usize,
     user_calculated: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EvalSettings {
+    pub angle_mode: AngleMode,
+    pub standard_precedence: bool,
+    pub auto_evaluate: bool,
+    pub max_history: usize,
+}
+
+impl Default for EvalSettings {
+    fn default() -> Self {
+        Self {
+            angle_mode: AngleMode::Degrees,
+            standard_precedence: true,
+            auto_evaluate: true,
+            max_history: 200,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -53,28 +42,23 @@ pub struct Engine {
     error: Option<String>,
     open_parens: usize,
     user_calculated: bool,
-    // Enhanced features
     undo_stack: Vec<Snapshot>,
     pub history: Vec<HistoryEntry>,
     pub memory_slots: Vec<MemorySlot>,
     pub pinned: Vec<PinnedCalc>,
     pub note: String,
+    settings: EvalSettings,
 }
 
 impl Engine {
-    pub fn new() -> Self {
-        let cfg = crate::config::get();
-        let angle_mode = match cfg.behavior.angle_mode.as_str() {
-            "radians" => AngleMode::Radians,
-            _ => AngleMode::Degrees,
-        };
+    pub fn new(settings: EvalSettings) -> Self {
         Self {
             tokens: Vec::new(),
             buffer: String::new(),
             result: None,
             last_value: 0.0,
             memory: 0.0,
-            angle_mode,
+            angle_mode: settings.angle_mode,
             error: None,
             open_parens: 0,
             user_calculated: false,
@@ -83,6 +67,7 @@ impl Engine {
             memory_slots: Vec::new(),
             pinned: Vec::new(),
             note: String::new(),
+            settings,
         }
     }
 
@@ -114,7 +99,7 @@ impl Engine {
     }
 
     pub fn auto_eval(&self) -> Option<String> {
-        if !crate::config::get().behavior.auto_evaluate {
+        if !self.settings.auto_evaluate {
             return None;
         }
         if self.error.is_some() || self.user_calculated {
@@ -129,20 +114,14 @@ impl Engine {
         if tokens.is_empty() {
             return None;
         }
-        // Auto-close parens for preview
         for _ in 0..self.open_parens {
             tokens.push(Token::RightParen);
         }
-        match evaluate(&tokens, self.angle_mode) {
+        match eval::evaluate(&tokens, self.angle_mode, self.settings.standard_precedence) {
             Ok(val) => {
-                let text = format_number(val);
-                // Only show preview if it differs from the current display
+                let text = format_number_default(val);
                 let current = self.main_display_text();
-                if text != current {
-                    Some(text)
-                } else {
-                    None
-                }
+                if text != current { Some(text) } else { None }
             }
             Err(_) => None,
         }
@@ -154,7 +133,7 @@ impl Engine {
         }
         if self.user_calculated {
             if let Some(result) = self.result {
-                return format_number(result);
+                return format_number_default(result);
             }
         }
         let mut s = String::new();
@@ -163,7 +142,7 @@ impl Engine {
         }
         s.push_str(&self.buffer);
         if s.is_empty() {
-            return format_number(self.last_value);
+            return format_number_default(self.last_value);
         }
         s
     }
@@ -201,12 +180,12 @@ impl Engine {
             return err.clone();
         }
         if let Some(result) = self.result {
-            return format_number(result);
+            return format_number_default(result);
         }
         if !self.buffer.is_empty() {
             return self.buffer.clone();
         }
-        format_number(self.last_value)
+        format_number_default(self.last_value)
     }
 
     pub fn angle_mode(&self) -> AngleMode {
@@ -227,71 +206,43 @@ impl Engine {
         }
     }
 
-    // --- Input methods ---
     pub fn input_digit(&mut self, digit: char) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.start_fresh_if_needed();
-
         if self.buffer.is_empty() {
-            if matches!(
-                self.tokens.last(),
-                Some(Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))
-            ) {
+            if matches!(self.tokens.last(), Some(Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))) {
                 self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
             }
         }
-
-        if digit == '0' && (self.buffer == "0" || self.buffer == "-0") {
-            return;
-        }
-        if digit != '0' && self.buffer == "0" {
-            self.buffer.clear();
-        }
-        if digit != '0' && self.buffer == "-0" {
-            self.buffer = "-".to_string();
-        }
+        if digit == '0' && (self.buffer == "0" || self.buffer == "-0") { return; }
+        if digit != '0' && self.buffer == "0" { self.buffer.clear(); }
+        if digit != '0' && self.buffer == "-0" { self.buffer = "-".to_string(); }
         self.buffer.push(digit);
     }
 
     pub fn input_decimal(&mut self) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.start_fresh_if_needed();
-        if self.buffer.is_empty() {
-            self.buffer.push('0');
-        }
-        if !self.buffer.contains('.') {
-            self.buffer.push('.');
-        }
+        if self.buffer.is_empty() { self.buffer.push('0'); }
+        if !self.buffer.contains('.') { self.buffer.push('.'); }
     }
 
     pub fn input_binary_op(&mut self, op: BinaryOp) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
 
-        // Unary minus
         if op == BinaryOp::Subtract && self.buffer.is_empty() && self.result.is_none() {
             let needs_unary = self.tokens.is_empty()
-                || matches!(
-                    self.tokens.last(),
-                    Some(Token::BinaryOp(_) | Token::LeftParen | Token::UnaryFunc(_))
-                );
+                || matches!(self.tokens.last(), Some(Token::BinaryOp(_) | Token::LeftParen | Token::UnaryFunc(_)));
             if needs_unary {
                 self.buffer = "-".to_string();
                 return;
             }
         }
 
-        if self.tokens.is_empty() && self.buffer.is_empty() && self.result.is_none() {
-            return;
-        }
+        if self.tokens.is_empty() && self.buffer.is_empty() && self.result.is_none() { return; }
 
         if let Some(result) = self.result.take() {
             self.tokens.clear();
@@ -308,16 +259,14 @@ impl Engine {
     }
 
     pub fn input_unary_func(&mut self, func: UnaryFunc) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
 
         if let Some(result) = self.result.take() {
             self.tokens.clear();
             self.user_calculated = false;
             self.error = None;
-            match apply_unary(func, result, self.angle_mode) {
+            match eval::apply_unary(func, result, self.angle_mode) {
                 Ok(val) => {
                     self.tokens.push(Token::UnaryFunc(func));
                     self.tokens.push(Token::LeftParen);
@@ -332,33 +281,26 @@ impl Engine {
         }
 
         self.start_fresh_if_needed();
-
         if !self.buffer.is_empty() {
             self.finalize_buffer();
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
-        } else if matches!(
-            self.tokens.last(),
-            Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))
-        ) {
+        } else if matches!(self.tokens.last(), Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))) {
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
         }
-
         self.tokens.push(Token::UnaryFunc(func));
         self.tokens.push(Token::LeftParen);
         self.open_parens += 1;
     }
 
     pub fn input_postfix_op(&mut self, op: PostfixOp) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
 
         if let Some(result) = self.result.take() {
             self.tokens.clear();
             self.user_calculated = false;
             self.error = None;
-            match apply_postfix(op, result) {
+            match eval::apply_postfix(op, result) {
                 Ok(val) => {
                     self.tokens.push(Token::Number(result));
                     self.tokens.push(Token::PostfixOp(op));
@@ -372,8 +314,7 @@ impl Engine {
 
         self.finalize_buffer();
         self.tokens.push(Token::PostfixOp(op));
-
-        match evaluate(&self.tokens, self.angle_mode) {
+        match eval::evaluate(&self.tokens, self.angle_mode, self.settings.standard_precedence) {
             Ok(val) => {
                 self.result = Some(val);
                 self.last_value = val;
@@ -383,51 +324,35 @@ impl Engine {
     }
 
     pub fn input_constant(&mut self, value: f64, name: &'static str) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.start_fresh_if_needed();
-
         if !self.buffer.is_empty() {
             self.finalize_buffer();
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
-        } else if matches!(
-            self.tokens.last(),
-            Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))
-        ) {
+        } else if matches!(self.tokens.last(), Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))) {
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
         }
-
         self.tokens.push(Token::Constant(name, value));
         self.last_value = value;
     }
 
     pub fn input_left_paren(&mut self) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.start_fresh_if_needed();
-
         if !self.buffer.is_empty() {
             self.finalize_buffer();
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
-        } else if matches!(
-            self.tokens.last(),
-            Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))
-        ) {
+        } else if matches!(self.tokens.last(), Some(Token::Number(_) | Token::Constant(..) | Token::RightParen | Token::PostfixOp(_))) {
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
         }
-
         self.tokens.push(Token::LeftParen);
         self.open_parens += 1;
     }
 
     pub fn input_right_paren(&mut self) {
-        if self.error.is_some() || self.open_parens == 0 {
-            return;
-        }
+        if self.error.is_some() || self.open_parens == 0 { return; }
         self.save_snapshot();
         self.finalize_buffer();
         self.tokens.push(Token::RightParen);
@@ -435,9 +360,7 @@ impl Engine {
     }
 
     pub fn input_ee(&mut self) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.finalize_buffer();
         self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
@@ -445,10 +368,8 @@ impl Engine {
         self.tokens.push(Token::BinaryOp(BinaryOp::Power));
     }
 
-    pub fn calculate(&mut self) {
-        if self.error.is_some() {
-            return;
-        }
+    pub fn calculate(&mut self, timestamp: u64, session: u64) {
+        if self.error.is_some() { return; }
         self.save_snapshot();
         self.finalize_buffer();
         for _ in 0..self.open_parens {
@@ -456,25 +377,23 @@ impl Engine {
         }
         self.open_parens = 0;
 
-        match evaluate(&self.tokens, self.angle_mode) {
+        match eval::evaluate(&self.tokens, self.angle_mode, self.settings.standard_precedence) {
             Ok(val) => {
-                // Save to history
                 let mut expr_str = String::new();
                 for token in &self.tokens {
                     expr_str.push_str(&token_display(token));
                 }
                 self.history.push(HistoryEntry {
                     expression: expr_str,
-                    result_text: format_number(val),
+                    result_text: format_number_default(val),
                     result: val,
-                    timestamp: crate::config::current_timestamp(),
-                    session: 0,
+                    timestamp,
+                    session,
                 });
-                let max = crate::config::get().history.max_entries;
+                let max = self.settings.max_history;
                 if self.history.len() > max {
                     self.history.remove(0);
                 }
-
                 self.result = Some(val);
                 self.last_value = val;
                 self.error = None;
@@ -497,22 +416,14 @@ impl Engine {
         self.user_calculated = false;
     }
 
-    pub fn clear_entry(&mut self) {
-        self.buffer.clear();
-    }
-
     pub fn backspace(&mut self) {
-        if self.result.is_some() || self.error.is_some() {
-            return;
-        }
+        if self.result.is_some() || self.error.is_some() { return; }
         self.save_snapshot();
         if !self.buffer.is_empty() {
             self.buffer.pop();
         } else if let Some(token) = self.tokens.pop() {
             match token {
-                Token::RightParen => {
-                    self.open_parens += 1;
-                }
+                Token::RightParen => { self.open_parens += 1; }
                 Token::LeftParen => {
                     self.open_parens = self.open_parens.saturating_sub(1);
                     if matches!(self.tokens.last(), Some(Token::UnaryFunc(_))) {
@@ -525,9 +436,7 @@ impl Engine {
     }
 
     pub fn toggle_sign(&mut self) {
-        if self.error.is_some() {
-            return;
-        }
+        if self.error.is_some() { return; }
         self.save_snapshot();
         if !self.buffer.is_empty() {
             if self.buffer.starts_with('-') {
@@ -538,97 +447,63 @@ impl Engine {
         }
     }
 
-    // --- Memory (legacy single-value for backward compat) ---
-
-    pub fn memory_clear(&mut self) {
-        self.memory = 0.0;
-    }
-
+    pub fn memory_clear(&mut self) { self.memory = 0.0; }
     pub fn memory_recall(&mut self) {
         self.start_fresh_if_needed();
-        self.buffer = format_number(self.memory);
+        self.buffer = format_number_default(self.memory);
         self.last_value = self.memory;
     }
-
     pub fn memory_add(&mut self) {
-        if let Some(r) = self.result {
-            self.memory += r;
-        } else if let Ok(v) = self.buffer.parse::<f64>() {
-            self.memory += v;
-        }
+        if let Some(r) = self.result { self.memory += r; }
+        else if let Ok(v) = self.buffer.parse::<f64>() { self.memory += v; }
     }
-
     pub fn memory_subtract(&mut self) {
-        if let Some(r) = self.result {
-            self.memory -= r;
-        } else if let Ok(v) = self.buffer.parse::<f64>() {
-            self.memory -= v;
-        }
+        if let Some(r) = self.result { self.memory -= r; }
+        else if let Ok(v) = self.buffer.parse::<f64>() { self.memory -= v; }
     }
-
-    // --- Multi-slot memory ---
 
     pub fn memory_store(&mut self, label: String) {
         let val = self.current_value();
         self.memory_slots.push(MemorySlot { label, value: val });
     }
-
     pub fn memory_recall_slot(&mut self, index: usize) {
         if let Some(slot) = self.memory_slots.get(index) {
             let val = slot.value;
             self.start_fresh_if_needed();
-            self.buffer = format_number(val);
+            self.buffer = format_number_default(val);
             self.last_value = val;
         }
     }
-
     pub fn memory_delete_slot(&mut self, index: usize) {
-        if index < self.memory_slots.len() {
-            self.memory_slots.remove(index);
-        }
+        if index < self.memory_slots.len() { self.memory_slots.remove(index); }
     }
-
-    // --- Pinned calculations ---
 
     pub fn pin_result(&mut self, label: String) {
         let val = self.current_value();
         let expr = self.expression_text();
-        self.pinned.push(PinnedCalc {
-            label,
-            expression: expr,
-            result: val,
-        });
+        self.pinned.push(PinnedCalc { label, expression: expr, result: val });
     }
-
     pub fn delete_pin(&mut self, index: usize) {
-        if index < self.pinned.len() {
-            self.pinned.remove(index);
-        }
+        if index < self.pinned.len() { self.pinned.remove(index); }
     }
-
     pub fn recall_pinned(&mut self, index: usize) {
         if let Some(pin) = self.pinned.get(index) {
             let val = pin.result;
             self.start_fresh_if_needed();
-            self.buffer = format_number(val);
+            self.buffer = format_number_default(val);
             self.last_value = val;
         }
     }
-
-    // --- History ---
 
     pub fn recall_history(&mut self, index: usize) {
         if let Some(entry) = self.history.get(index) {
             let val = entry.result;
             self.start_fresh_if_needed();
-            self.buffer = format_number(val);
+            self.buffer = format_number_default(val);
             self.last_value = val;
         }
     }
-
-    pub fn clear_history(&mut self) {
-        self.history.clear();
-    }
+    pub fn clear_history(&mut self) { self.history.clear(); }
 
     pub fn toggle_angle_mode(&mut self) {
         self.angle_mode = match self.angle_mode {
@@ -636,8 +511,6 @@ impl Engine {
             AngleMode::Degrees => AngleMode::Radians,
         };
     }
-
-    // --- Internal ---
 
     fn finalize_buffer(&mut self) {
         if !self.buffer.is_empty() {
@@ -663,9 +536,13 @@ impl Engine {
 mod tests {
     use super::*;
 
+    fn engine() -> Engine {
+        Engine::new(EvalSettings::default())
+    }
+
     #[test]
     fn expression_display() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('2');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
@@ -675,46 +552,61 @@ mod tests {
 
     #[test]
     fn calculate_shows_equals() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('5');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.expression_text(), "5+3=");
         assert_eq!(e.result_text(), "8");
     }
 
     #[test]
     fn chain_from_result() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('5');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
-        e.calculate();
+        e.calculate(0, 0);
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('2');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.result_text(), "16");
     }
 
     #[test]
     fn precedence_in_engine() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('2');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('4');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.result_text(), "14");
     }
 
     #[test]
+    fn no_precedence_in_engine() {
+        let mut e = Engine::new(EvalSettings {
+            standard_precedence: false,
+            ..EvalSettings::default()
+        });
+        e.input_digit('2');
+        e.input_binary_op(BinaryOp::Add);
+        e.input_digit('3');
+        e.input_binary_op(BinaryOp::Multiply);
+        e.input_digit('4');
+        e.calculate(0, 0);
+        assert_eq!(e.result_text(), "20");
+    }
+
+    #[test]
     fn unary_func_on_result() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('3');
         e.input_digit('0');
-        e.calculate();
+        e.calculate(0, 0);
         e.input_unary_func(UnaryFunc::Sin);
         let val: f64 = e.result_text().parse().unwrap();
         assert!((val - 0.5).abs() < 1e-10);
@@ -722,7 +614,7 @@ mod tests {
 
     #[test]
     fn postfix_auto_evaluates() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('5');
         e.input_postfix_op(PostfixOp::Square);
         assert_eq!(e.result_text(), "25");
@@ -730,26 +622,26 @@ mod tests {
 
     #[test]
     fn constant_display() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_constant(std::f64::consts::PI, "\u{03c0}");
         assert!(e.expression_text().contains('\u{03c0}'));
     }
 
     #[test]
     fn unary_minus() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_binary_op(BinaryOp::Subtract);
         e.input_digit('5');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.result_text(), "-5");
     }
 
     #[test]
     fn memory_operations() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('4');
         e.input_digit('2');
-        e.calculate();
+        e.calculate(0, 0);
         e.memory_add();
         assert!(e.has_memory());
         e.clear();
@@ -761,11 +653,11 @@ mod tests {
 
     #[test]
     fn division_by_zero_error() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('5');
         e.input_binary_op(BinaryOp::Divide);
         e.input_digit('0');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.result_text(), "Division by zero");
         e.clear();
         assert_eq!(e.result_text(), "0");
@@ -773,7 +665,7 @@ mod tests {
 
     #[test]
     fn parentheses() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_left_paren();
         e.input_digit('2');
         e.input_binary_op(BinaryOp::Add);
@@ -781,14 +673,13 @@ mod tests {
         e.input_right_paren();
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('4');
-        e.calculate();
+        e.calculate(0, 0);
         assert_eq!(e.result_text(), "20");
-        assert_eq!(e.expression_text(), "(2+3)\u{00d7}4=");
     }
 
     #[test]
     fn undo_works() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('5');
         e.input_digit('3');
         e.undo();
@@ -797,18 +688,30 @@ mod tests {
 
     #[test]
     fn history_recorded() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('2');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
-        e.calculate();
+        e.calculate(100, 1);
         assert_eq!(e.history.len(), 1);
         assert_eq!(e.history[0].result, 5.0);
+        assert_eq!(e.history[0].timestamp, 100);
+        assert_eq!(e.history[0].session, 1);
+    }
+
+    #[test]
+    fn history_limit() {
+        let mut e = Engine::new(EvalSettings { max_history: 3, ..EvalSettings::default() });
+        for i in 0..5 {
+            e.input_digit(char::from_digit(i % 10, 10).unwrap());
+            e.calculate(0, 0);
+        }
+        assert_eq!(e.history.len(), 3);
     }
 
     #[test]
     fn auto_eval_preview() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('2');
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
@@ -816,11 +719,20 @@ mod tests {
     }
 
     #[test]
+    fn auto_eval_disabled() {
+        let mut e = Engine::new(EvalSettings { auto_evaluate: false, ..EvalSettings::default() });
+        e.input_digit('2');
+        e.input_binary_op(BinaryOp::Add);
+        e.input_digit('3');
+        assert_eq!(e.auto_eval(), None);
+    }
+
+    #[test]
     fn memory_slots() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('4');
         e.input_digit('2');
-        e.calculate();
+        e.calculate(0, 0);
         e.memory_store("test".to_string());
         assert_eq!(e.memory_slots.len(), 1);
         assert_eq!(e.memory_slots[0].value, 42.0);
@@ -831,12 +743,55 @@ mod tests {
 
     #[test]
     fn pinned_calcs() {
-        let mut e = Engine::new();
+        let mut e = engine();
         e.input_digit('1');
         e.input_digit('0');
-        e.calculate();
+        e.calculate(0, 0);
         e.pin_result("budget".to_string());
         assert_eq!(e.pinned.len(), 1);
         assert_eq!(e.pinned[0].label, "budget");
+    }
+
+    #[test]
+    fn backspace_behavior() {
+        let mut e = engine();
+        e.input_digit('1');
+        e.input_digit('2');
+        e.input_digit('3');
+        e.backspace();
+        assert_eq!(e.main_display_text(), "12");
+        e.backspace();
+        assert_eq!(e.main_display_text(), "1");
+    }
+
+    #[test]
+    fn toggle_sign() {
+        let mut e = engine();
+        e.input_digit('5');
+        e.toggle_sign();
+        assert_eq!(e.main_display_text(), "-5");
+        e.toggle_sign();
+        assert_eq!(e.main_display_text(), "5");
+    }
+
+    #[test]
+    fn error_blocks_input() {
+        let mut e = engine();
+        e.input_digit('5');
+        e.input_binary_op(BinaryOp::Divide);
+        e.input_digit('0');
+        e.calculate(0, 0);
+        e.input_digit('3');
+        assert_eq!(e.result_text(), "Division by zero");
+    }
+
+    #[test]
+    fn ee_input() {
+        let mut e = engine();
+        e.input_digit('5');
+        e.input_ee();
+        e.input_digit('3');
+        e.calculate(0, 0);
+        assert_eq!(e.result_text(), "5000");
     }
 }

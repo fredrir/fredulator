@@ -5,8 +5,10 @@ use gtk::{
     WindowType,
 };
 
-use crate::eval::{BinaryOp, PostfixOp, UnaryFunc};
-use crate::keyboard::Direction;
+use crate::domain::types::*;
+use crate::services::config::Config;
+use crate::services::theme::Theme;
+use crate::ui::navigation::NavButton;
 
 #[derive(Clone, Copy)]
 pub enum ButtonAction {
@@ -27,13 +29,6 @@ pub enum ButtonAction {
     MemoryAdd,
     MemorySubtract,
     ToggleAngleMode,
-}
-
-pub struct NavButton {
-    pub button: Button,
-    pub col: usize,
-    pub row: usize,
-    pub scientific: bool,
 }
 
 pub struct CalculatorUI {
@@ -94,56 +89,8 @@ pub struct CalculatorUI {
     pub angle_btn: Option<Button>,
 }
 
-pub fn navigate(nav: &[NavButton], dir: Direction, scientific: bool) {
-    let visible: Vec<&NavButton> = nav.iter().filter(|b| !b.scientific || scientific).collect();
-    let current = visible.iter().find(|b| b.button.has_focus());
-    if let Some(cur) = current {
-        let (cc, cr) = eff_pos(cur, scientific);
-        let target = match dir {
-            Direction::Left => visible
-                .iter()
-                .filter(|b| eff_pos(b, scientific).1 == cr && eff_pos(b, scientific).0 < cc)
-                .max_by_key(|b| eff_pos(b, scientific).0),
-            Direction::Right => visible
-                .iter()
-                .filter(|b| eff_pos(b, scientific).1 == cr && eff_pos(b, scientific).0 > cc)
-                .min_by_key(|b| eff_pos(b, scientific).0),
-            Direction::Up => visible
-                .iter()
-                .filter(|b| eff_pos(b, scientific).0 == cc && eff_pos(b, scientific).1 < cr)
-                .max_by_key(|b| eff_pos(b, scientific).1),
-            Direction::Down => visible
-                .iter()
-                .filter(|b| eff_pos(b, scientific).0 == cc && eff_pos(b, scientific).1 > cr)
-                .min_by_key(|b| eff_pos(b, scientific).1),
-        };
-        if let Some(t) = target {
-            t.button.grab_focus();
-        }
-    } else if let Some(first) = visible.first() {
-        first.button.grab_focus();
-    }
-}
-
-pub fn activate_focused(nav: &[NavButton], scientific: bool) {
-    let visible: Vec<&NavButton> = nav.iter().filter(|b| !b.scientific || scientific).collect();
-    if let Some(b) = visible.iter().find(|b| b.button.has_focus()) {
-        b.button.clicked();
-    }
-}
-
-fn eff_pos(b: &NavButton, scientific: bool) -> (usize, usize) {
-    if b.scientific {
-        (b.col, b.row)
-    } else if scientific {
-        (b.col + 3, b.row)
-    } else {
-        (b.col, b.row)
-    }
-}
-
-pub fn build() -> CalculatorUI {
-    let wcfg = &crate::config::get().window;
+pub fn build(config: &Config) -> CalculatorUI {
+    let wcfg = &config.window;
     let window = Window::new(WindowType::Toplevel);
     window.set_title("Fredulator");
     window.set_default_size(wcfg.default_width, wcfg.default_height);
@@ -177,7 +124,6 @@ pub fn build() -> CalculatorUI {
         b
     };
 
-    // Tab bar
     let tab_bar = gtk::Box::new(Orientation::Horizontal, 4);
     tab_bar.style_context().add_class("tab-bar");
 
@@ -192,7 +138,6 @@ pub fn build() -> CalculatorUI {
     tab_bar.pack_end(&menu_btn, false, false, 0);
     tab_bar.pack_end(&tab_add_btn, false, false, 0);
 
-    // Menu popover
     let menu_popover = gtk::Popover::new(Some(&menu_btn));
     let menu_box = gtk::Box::new(Orientation::Vertical, 2);
     menu_box.set_margin_top(8);
@@ -200,7 +145,6 @@ pub fn build() -> CalculatorUI {
     menu_box.set_margin_start(8);
     menu_box.set_margin_end(8);
 
-    // Mode selector
     let mode_selector = gtk::Box::new(Orientation::Horizontal, 2);
     mode_selector.style_context().add_class("mode-selector");
     let menu_basic_btn = Button::with_label("Basic");
@@ -238,7 +182,7 @@ pub fn build() -> CalculatorUI {
     menu_box.pack_start(&theme_header, false, false, 0);
 
     let mut menu_theme_btns = Vec::new();
-    for (i, theme) in crate::theme::Theme::ALL.iter().enumerate() {
+    for (i, theme) in Theme::ALL.iter().enumerate() {
         let row_box = gtk::Box::new(Orientation::Horizontal, 6);
         row_box.set_margin_start(4);
 
@@ -311,7 +255,6 @@ pub fn build() -> CalculatorUI {
         });
     }
 
-    // Display area
     let expr_label = Label::new(Some(" "));
     expr_label.style_context().add_class("expression-label");
     expr_label.set_xalign(1.0);
@@ -339,7 +282,7 @@ pub fn build() -> CalculatorUI {
     display_box.pack_start(&result_label, true, true, 0);
     display_box.pack_start(&preview_label, false, false, 0);
 
-    let layout_cfg = &crate::config::get().layout;
+    let layout_cfg = &config.layout;
     let spacing = layout_cfg.button_spacing as i32;
 
     let sci_grid = Grid::new();
@@ -353,142 +296,34 @@ pub fn build() -> CalculatorUI {
         ("MC", "memory-button", ButtonAction::MemoryClear, 0, 0),
         ("MR", "memory-button", ButtonAction::MemoryRecall, 1, 0),
         ("M+", "memory-button", ButtonAction::MemoryAdd, 2, 0),
-        (
-            "M\u{2212}",
-            "memory-button",
-            ButtonAction::MemorySubtract,
-            0,
-            1,
-        ),
+        ("M\u{2212}", "memory-button", ButtonAction::MemorySubtract, 0, 1),
         ("(", "paren-button", ButtonAction::LeftParen, 1, 1),
         (")", "paren-button", ButtonAction::RightParen, 2, 1),
         ("Deg", "toggle-button", ButtonAction::ToggleAngleMode, 0, 2),
-        (
-            "x\u{00b2}",
-            "power-button",
-            ButtonAction::PostfixOp(PostfixOp::Square),
-            1,
-            2,
-        ),
-        (
-            "x\u{00b3}",
-            "power-button",
-            ButtonAction::PostfixOp(PostfixOp::Cube),
-            2,
-            2,
-        ),
-        (
-            "x\u{02b8}",
-            "power-button",
-            ButtonAction::BinaryOp(BinaryOp::Power),
-            0,
-            3,
-        ),
-        (
-            "\u{215f}x",
-            "power-button",
-            ButtonAction::PostfixOp(PostfixOp::Reciprocal),
-            1,
-            3,
-        ),
-        (
-            "\u{221a}",
-            "power-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Sqrt),
-            2,
-            3,
-        ),
-        (
-            "\u{00b3}\u{221a}",
-            "power-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Cbrt),
-            0,
-            4,
-        ),
-        (
-            "sin",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Sin),
-            1,
-            4,
-        ),
-        (
-            "cos",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Cos),
-            2,
-            4,
-        ),
-        (
-            "tan",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Tan),
-            0,
-            5,
-        ),
-        (
-            "ln",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Ln),
-            1,
-            5,
-        ),
-        (
-            "log",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Log10),
-            2,
-            5,
-        ),
-        (
-            "n!",
-            "function-button",
-            ButtonAction::PostfixOp(PostfixOp::Factorial),
-            0,
-            6,
-        ),
-        (
-            "\u{03c0}",
-            "constant-button",
-            ButtonAction::Constant(std::f64::consts::PI, "\u{03c0}"),
-            1,
-            6,
-        ),
-        (
-            "e",
-            "constant-button",
-            ButtonAction::Constant(std::f64::consts::E, "e"),
-            2,
-            6,
-        ),
+        ("x\u{00b2}", "power-button", ButtonAction::PostfixOp(PostfixOp::Square), 1, 2),
+        ("x\u{00b3}", "power-button", ButtonAction::PostfixOp(PostfixOp::Cube), 2, 2),
+        ("x\u{02b8}", "power-button", ButtonAction::BinaryOp(BinaryOp::Power), 0, 3),
+        ("\u{215f}x", "power-button", ButtonAction::PostfixOp(PostfixOp::Reciprocal), 1, 3),
+        ("\u{221a}", "power-button", ButtonAction::UnaryFunc(UnaryFunc::Sqrt), 2, 3),
+        ("\u{00b3}\u{221a}", "power-button", ButtonAction::UnaryFunc(UnaryFunc::Cbrt), 0, 4),
+        ("sin", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Sin), 1, 4),
+        ("cos", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Cos), 2, 4),
+        ("tan", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Tan), 0, 5),
+        ("ln", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Ln), 1, 5),
+        ("log", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Log10), 2, 5),
+        ("n!", "function-button", ButtonAction::PostfixOp(PostfixOp::Factorial), 0, 6),
+        ("\u{03c0}", "constant-button", ButtonAction::Constant(std::f64::consts::PI, "\u{03c0}"), 1, 6),
+        ("e", "constant-button", ButtonAction::Constant(std::f64::consts::E, "e"), 2, 6),
         ("EE", "function-button", ButtonAction::EE, 0, 7),
-        (
-            "sin\u{207b}\u{00b9}",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Asin),
-            1,
-            7,
-        ),
-        (
-            "cos\u{207b}\u{00b9}",
-            "function-button",
-            ButtonAction::UnaryFunc(UnaryFunc::Acos),
-            2,
-            7,
-        ),
+        ("sin\u{207b}\u{00b9}", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Asin), 1, 7),
+        ("cos\u{207b}\u{00b9}", "function-button", ButtonAction::UnaryFunc(UnaryFunc::Acos), 2, 7),
     ];
 
     let mut angle_btn_ref = None;
     for (label, class, action, col, row) in sci_btns {
         let b = mk(
-            label,
-            class,
-            action,
-            col,
-            row,
-            true,
-            &mut action_buttons,
-            &mut nav_buttons,
+            label, class, action, col, row, true,
+            &mut action_buttons, &mut nav_buttons,
         );
         sci_grid.attach(&b, col as i32, row as i32, 1, 1);
         if matches!(action, ButtonAction::ToggleAngleMode) {
@@ -503,161 +338,43 @@ pub fn build() -> CalculatorUI {
     main_grid.set_column_homogeneous(true);
     main_grid.set_row_homogeneous(true);
 
-    let b = mk(
-        "AC",
-        "clear-button",
-        ButtonAction::Clear,
-        0,
-        0,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("AC", "clear-button", ButtonAction::Clear, 0, 0, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 0, 0, 1, 1);
-    let b = mk(
-        "+/\u{2212}",
-        "util-button",
-        ButtonAction::ToggleSign,
-        1,
-        0,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("+/\u{2212}", "util-button", ButtonAction::ToggleSign, 1, 0, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 1, 0, 1, 1);
-    let b = mk(
-        "%",
-        "util-button",
-        ButtonAction::PostfixOp(PostfixOp::Percent),
-        2,
-        0,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("%", "util-button", ButtonAction::PostfixOp(PostfixOp::Percent), 2, 0, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 2, 0, 1, 1);
-    let b = mk(
-        "\u{00f7}",
-        "op-button",
-        ButtonAction::BinaryOp(BinaryOp::Divide),
-        3,
-        0,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("\u{00f7}", "op-button", ButtonAction::BinaryOp(BinaryOp::Divide), 3, 0, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 3, 0, 1, 1);
 
     for (i, d) in ['7', '8', '9'].iter().enumerate() {
-        let b = mk(
-            &d.to_string(),
-            "digit-button",
-            ButtonAction::Digit(*d),
-            i,
-            1,
-            false,
-            &mut action_buttons,
-            &mut nav_buttons,
-        );
+        let b = mk(&d.to_string(), "digit-button", ButtonAction::Digit(*d), i, 1, false, &mut action_buttons, &mut nav_buttons);
         main_grid.attach(&b, i as i32, 1, 1, 1);
     }
-    let b = mk(
-        "\u{00d7}",
-        "op-button",
-        ButtonAction::BinaryOp(BinaryOp::Multiply),
-        3,
-        1,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("\u{00d7}", "op-button", ButtonAction::BinaryOp(BinaryOp::Multiply), 3, 1, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 3, 1, 1, 1);
 
     for (i, d) in ['4', '5', '6'].iter().enumerate() {
-        let b = mk(
-            &d.to_string(),
-            "digit-button",
-            ButtonAction::Digit(*d),
-            i,
-            2,
-            false,
-            &mut action_buttons,
-            &mut nav_buttons,
-        );
+        let b = mk(&d.to_string(), "digit-button", ButtonAction::Digit(*d), i, 2, false, &mut action_buttons, &mut nav_buttons);
         main_grid.attach(&b, i as i32, 2, 1, 1);
     }
-    let b = mk(
-        "\u{2212}",
-        "op-button",
-        ButtonAction::BinaryOp(BinaryOp::Subtract),
-        3,
-        2,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("\u{2212}", "op-button", ButtonAction::BinaryOp(BinaryOp::Subtract), 3, 2, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 3, 2, 1, 1);
 
     for (i, d) in ['1', '2', '3'].iter().enumerate() {
-        let b = mk(
-            &d.to_string(),
-            "digit-button",
-            ButtonAction::Digit(*d),
-            i,
-            3,
-            false,
-            &mut action_buttons,
-            &mut nav_buttons,
-        );
+        let b = mk(&d.to_string(), "digit-button", ButtonAction::Digit(*d), i, 3, false, &mut action_buttons, &mut nav_buttons);
         main_grid.attach(&b, i as i32, 3, 1, 1);
     }
-    let b = mk(
-        "+",
-        "op-button",
-        ButtonAction::BinaryOp(BinaryOp::Add),
-        3,
-        3,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("+", "op-button", ButtonAction::BinaryOp(BinaryOp::Add), 3, 3, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 3, 3, 1, 1);
 
-    let d0 = mk(
-        "0",
-        "digit-button",
-        ButtonAction::Digit('0'),
-        1,
-        4,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let d0 = mk("0", "digit-button", ButtonAction::Digit('0'), 1, 4, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&d0, 0, 4, 2, 1);
-    let b = mk(
-        ".",
-        "digit-button",
-        ButtonAction::Decimal,
-        2,
-        4,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk(".", "digit-button", ButtonAction::Decimal, 2, 4, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 2, 4, 1, 1);
-    let b = mk(
-        "=",
-        "equals-button",
-        ButtonAction::Equals,
-        3,
-        4,
-        false,
-        &mut action_buttons,
-        &mut nav_buttons,
-    );
+    let b = mk("=", "equals-button", ButtonAction::Equals, 3, 4, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 3, 4, 1, 1);
 
-    // Side panel
     let panel_revealer = Revealer::new();
     panel_revealer.set_transition_type(RevealerTransitionType::SlideRight);
     panel_revealer.set_transition_duration(200);
@@ -699,9 +416,7 @@ pub fn build() -> CalculatorUI {
     let history_panel = gtk::Box::new(Orientation::Vertical, 2);
     let history_search_entry = Entry::new();
     history_search_entry.set_placeholder_text(Some("Search history..."));
-    history_search_entry
-        .style_context()
-        .add_class("panel-search");
+    history_search_entry.style_context().add_class("panel-search");
     history_search_entry.set_margin_start(4);
     history_search_entry.set_margin_end(4);
     history_search_entry.set_margin_top(4);
@@ -722,14 +437,10 @@ pub fn build() -> CalculatorUI {
     history_toolbar.set_margin_end(4);
     history_toolbar.set_margin_bottom(4);
     let history_export_json_btn = Button::with_label("JSON");
-    history_export_json_btn
-        .style_context()
-        .add_class("panel-tab");
+    history_export_json_btn.style_context().add_class("panel-tab");
     history_export_json_btn.set_can_focus(false);
     let history_export_csv_btn = Button::with_label("CSV");
-    history_export_csv_btn
-        .style_context()
-        .add_class("panel-tab");
+    history_export_csv_btn.style_context().add_class("panel-tab");
     history_export_csv_btn.set_can_focus(false);
     let history_clear_btn = Button::with_label("Clear");
     history_clear_btn.style_context().add_class("panel-tab");
@@ -764,7 +475,6 @@ pub fn build() -> CalculatorUI {
     panel_container.pack_start(&panel_stack, true, true, 0);
     panel_revealer.add(&panel_container);
 
-    // Mode stack (now only holds calculator)
     let mode_stack = Stack::new();
     mode_stack.set_transition_type(StackTransitionType::SlideLeftRight);
     mode_stack.set_transition_duration(200);
@@ -778,7 +488,6 @@ pub fn build() -> CalculatorUI {
     calc_view.pack_start(&grid_box, true, true, 0);
     mode_stack.add_named(&calc_view, "calculator");
 
-    // Converter view
     let conv_view = gtk::Box::new(Orientation::Vertical, 8);
     conv_view.style_context().add_class("converter-panel");
     conv_view.set_margin_top(8);
@@ -797,7 +506,7 @@ pub fn build() -> CalculatorUI {
 
     let conv_cat_box = gtk::Box::new(Orientation::Horizontal, 4);
     let mut conv_cat_btns = Vec::new();
-    for cat in crate::convert::Category::ALL {
+    for cat in ConvertCategory::ALL {
         let btn = Button::with_label(cat.name());
         btn.style_context().add_class("converter-cat-btn");
         btn.set_hexpand(true);
@@ -835,9 +544,7 @@ pub fn build() -> CalculatorUI {
 
     let conv_to_box = gtk::Box::new(Orientation::Horizontal, 8);
     let conv_result_label = Label::new(Some("1"));
-    conv_result_label
-        .style_context()
-        .add_class("converter-result");
+    conv_result_label.style_context().add_class("converter-result");
     conv_result_label.set_xalign(1.0);
     conv_result_label.set_hexpand(true);
     let conv_to_combo = ComboBoxText::new();
@@ -845,14 +552,13 @@ pub fn build() -> CalculatorUI {
     conv_to_box.pack_start(&conv_to_combo, false, false, 0);
     conv_view.pack_start(&conv_to_box, false, false, 0);
 
-    for (abbr, _name) in crate::convert::Category::Length.units() {
+    for (abbr, _name) in ConvertCategory::Length.units() {
         conv_from_combo.append_text(abbr);
         conv_to_combo.append_text(abbr);
     }
     conv_from_combo.set_active(Some(0));
     conv_to_combo.set_active(Some(1));
 
-    // Tools view
     let tools_view = gtk::Box::new(Orientation::Vertical, 8);
     tools_view.style_context().add_class("tools-panel");
     tools_view.set_margin_top(8);
@@ -926,9 +632,7 @@ pub fn build() -> CalculatorUI {
     discount_pct_entry.set_placeholder_text(Some("10"));
     disc_page.pack_start(&discount_pct_entry, false, false, 0);
     let discount_result_label = Label::new(Some("Save: 0  |  Final: 0"));
-    discount_result_label
-        .style_context()
-        .add_class("tools-result");
+    discount_result_label.style_context().add_class("tools-result");
     disc_page.pack_start(&discount_result_label, false, false, 8);
 
     tools_notebook.append_page(&disc_page, Some(&Label::new(Some("Discount"))));
@@ -957,7 +661,6 @@ pub fn build() -> CalculatorUI {
 
     tools_view.pack_start(&tools_notebook, true, true, 0);
 
-    // Notes view
     let notes_view = gtk::Box::new(Orientation::Vertical, 8);
     notes_view.style_context().add_class("notes-panel");
     notes_view.set_margin_top(8);
@@ -989,8 +692,7 @@ pub fn build() -> CalculatorUI {
     results_label.style_context().add_class("panel-item-label");
     notes_view.pack_start(&results_label, false, false, 0);
 
-    let notes_result_scroll =
-        ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    let notes_result_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     notes_result_scroll.set_min_content_height(100);
     let notes_result_label = Label::new(None);
     notes_result_label.style_context().add_class("notes-result");
@@ -1000,7 +702,6 @@ pub fn build() -> CalculatorUI {
     notes_result_scroll.add(&notes_result_label);
     notes_view.pack_start(&notes_result_scroll, true, true, 0);
 
-    // Mode panel (slide-in from right for converter/tools/notes)
     let mode_panel_stack = Stack::new();
     mode_panel_stack.set_transition_type(StackTransitionType::Crossfade);
     mode_panel_stack.set_transition_duration(150);
@@ -1009,9 +710,7 @@ pub fn build() -> CalculatorUI {
     mode_panel_stack.add_named(&notes_view, "notes");
 
     let mode_panel_container = gtk::Box::new(Orientation::Vertical, 0);
-    mode_panel_container
-        .style_context()
-        .add_class("mode-panel-container");
+    mode_panel_container.style_context().add_class("mode-panel-container");
     mode_panel_container.pack_start(&mode_panel_stack, true, true, 0);
 
     let mode_panel_revealer = Revealer::new();
@@ -1020,7 +719,6 @@ pub fn build() -> CalculatorUI {
     mode_panel_revealer.add(&mode_panel_container);
     mode_panel_revealer.set_reveal_child(false);
 
-    // Main layout
     let content_box = gtk::Box::new(Orientation::Horizontal, 0);
     content_box.pack_start(&panel_revealer, false, false, 0);
     content_box.pack_start(&mode_stack, true, true, 0);
