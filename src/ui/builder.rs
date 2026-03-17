@@ -260,6 +260,7 @@ pub fn build(config: &Config) -> CalculatorUI {
     expr_label.set_xalign(1.0);
     expr_label.set_hexpand(true);
     expr_label.set_selectable(false);
+    expr_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     expr_label.set_opacity(0.0);
 
     let result_label = Label::new(Some("0"));
@@ -268,12 +269,14 @@ pub fn build(config: &Config) -> CalculatorUI {
     result_label.set_hexpand(true);
     result_label.set_vexpand(true);
     result_label.set_selectable(false);
+    result_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
     let preview_label = Label::new(Some(" "));
     preview_label.style_context().add_class("preview-label");
     preview_label.set_xalign(1.0);
     preview_label.set_hexpand(true);
     preview_label.set_selectable(false);
+    preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     preview_label.set_opacity(0.0);
 
     let display_box = gtk::Box::new(Orientation::Vertical, 0);
