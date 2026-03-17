@@ -59,9 +59,9 @@ impl BinaryOp {
     pub fn symbol(self) -> &'static str {
         match self {
             Self::Add => "+",
-            Self::Subtract => "−",
-            Self::Multiply => "×",
-            Self::Divide => "÷",
+            Self::Subtract => "\u{2212}",
+            Self::Multiply => "\u{00d7}",
+            Self::Divide => "\u{00f7}",
             Self::Power => "^",
             Self::Modulo => " mod ",
         }
@@ -84,20 +84,20 @@ impl UnaryFunc {
             Self::Sin => "sin",
             Self::Cos => "cos",
             Self::Tan => "tan",
-            Self::Asin => "sin⁻¹",
-            Self::Acos => "cos⁻¹",
-            Self::Atan => "tan⁻¹",
+            Self::Asin => "sin\u{207b}\u{00b9}",
+            Self::Acos => "cos\u{207b}\u{00b9}",
+            Self::Atan => "tan\u{207b}\u{00b9}",
             Self::Sinh => "sinh",
             Self::Cosh => "cosh",
             Self::Tanh => "tanh",
             Self::Ln => "ln",
             Self::Log10 => "log",
-            Self::Log2 => "log₂",
-            Self::Sqrt => "√",
-            Self::Cbrt => "³√",
+            Self::Log2 => "log\u{2082}",
+            Self::Sqrt => "\u{221a}",
+            Self::Cbrt => "\u{00b3}\u{221a}",
             Self::Abs => "abs",
-            Self::Exp => "eˣ",
-            Self::TenPow => "10ˣ",
+            Self::Exp => "e\u{02e3}",
+            Self::TenPow => "10\u{02e3}",
         }
     }
 }
@@ -105,9 +105,9 @@ impl UnaryFunc {
 impl PostfixOp {
     pub fn symbol(self) -> &'static str {
         match self {
-            Self::Square => "²",
-            Self::Cube => "³",
-            Self::Reciprocal => "⁻¹",
+            Self::Square => "\u{00b2}",
+            Self::Cube => "\u{00b3}",
+            Self::Reciprocal => "\u{207b}\u{00b9}",
             Self::Factorial => "!",
             Self::Percent => "%",
         }
@@ -345,6 +345,207 @@ pub fn apply_postfix(op: PostfixOp, val: f64) -> Result<f64, String> {
     }
 }
 
+// --- Text expression parser for math notes ---
+
+pub fn parse_expression(input: &str) -> Result<Vec<Token>, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let input = input
+        .replace(" of ", " * ")
+        .replace('\u{00d7}', "*")
+        .replace('\u{00f7}', "/")
+        .replace('\u{2212}', "-");
+
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        match ch {
+            ' ' | '\t' => {
+                i += 1;
+            }
+            '0'..='9' | '.' => {
+                let start = i;
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                    i += 1;
+                }
+                let num_str: String = chars[start..i].iter().collect();
+                let val: f64 = num_str.parse().map_err(|_| "Invalid number".to_string())?;
+
+                // Check for % immediately after number
+                if i < chars.len() && chars[i] == '%' {
+                    tokens.push(Token::Number(val));
+                    tokens.push(Token::PostfixOp(PostfixOp::Percent));
+                    i += 1;
+                } else {
+                    // Implicit multiply before ( or letter
+                    if i < chars.len()
+                        && (chars[i] == '(' || chars[i].is_alphabetic() || chars[i] == '\u{03c0}')
+                    {
+                        tokens.push(Token::Number(val));
+                        tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                    } else {
+                        tokens.push(Token::Number(val));
+                    }
+                }
+            }
+            '+' => {
+                tokens.push(Token::BinaryOp(BinaryOp::Add));
+                i += 1;
+            }
+            '-' => {
+                let is_unary = tokens.is_empty()
+                    || matches!(
+                        tokens.last(),
+                        Some(Token::BinaryOp(_) | Token::LeftParen)
+                    );
+                if is_unary && i + 1 < chars.len() && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.') {
+                    i += 1;
+                    let start = i;
+                    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                        i += 1;
+                    }
+                    let num_str: String = chars[start..i].iter().collect();
+                    let val: f64 = num_str
+                        .parse::<f64>()
+                        .map(|v| -v)
+                        .map_err(|_| "Invalid number".to_string())?;
+                    tokens.push(Token::Number(val));
+                } else {
+                    tokens.push(Token::BinaryOp(BinaryOp::Subtract));
+                    i += 1;
+                }
+            }
+            '*' => {
+                tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                i += 1;
+            }
+            '/' => {
+                tokens.push(Token::BinaryOp(BinaryOp::Divide));
+                i += 1;
+            }
+            '^' => {
+                tokens.push(Token::BinaryOp(BinaryOp::Power));
+                i += 1;
+            }
+            '(' => {
+                // Implicit multiply: )( or number(
+                if matches!(
+                    tokens.last(),
+                    Some(Token::RightParen | Token::Number(_) | Token::Constant(..))
+                ) {
+                    tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                }
+                tokens.push(Token::LeftParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RightParen);
+                i += 1;
+            }
+            '!' => {
+                tokens.push(Token::PostfixOp(PostfixOp::Factorial));
+                i += 1;
+            }
+            '\u{03c0}' => {
+                if matches!(
+                    tokens.last(),
+                    Some(Token::Number(_) | Token::Constant(..) | Token::RightParen)
+                ) {
+                    tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                }
+                tokens.push(Token::Constant("\u{03c0}", std::f64::consts::PI));
+                i += 1;
+            }
+            _ if ch.is_alphabetic() => {
+                let start = i;
+                while i < chars.len() && chars[i].is_alphabetic() {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                let word_lower = word.to_lowercase();
+
+                // Implicit multiply before functions/constants
+                let need_mul = matches!(
+                    tokens.last(),
+                    Some(Token::Number(_) | Token::Constant(..) | Token::RightParen)
+                );
+
+                match word_lower.as_str() {
+                    "pi" => {
+                        if need_mul {
+                            tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                        }
+                        tokens.push(Token::Constant("\u{03c0}", std::f64::consts::PI));
+                    }
+                    "e" if i >= chars.len() || chars[i] != '(' => {
+                        if need_mul {
+                            tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                        }
+                        tokens.push(Token::Constant("e", std::f64::consts::E));
+                    }
+                    _ => {
+                        let func = match word_lower.as_str() {
+                            "sin" => Some(UnaryFunc::Sin),
+                            "cos" => Some(UnaryFunc::Cos),
+                            "tan" => Some(UnaryFunc::Tan),
+                            "asin" | "arcsin" => Some(UnaryFunc::Asin),
+                            "acos" | "arccos" => Some(UnaryFunc::Acos),
+                            "atan" | "arctan" => Some(UnaryFunc::Atan),
+                            "sinh" => Some(UnaryFunc::Sinh),
+                            "cosh" => Some(UnaryFunc::Cosh),
+                            "tanh" => Some(UnaryFunc::Tanh),
+                            "ln" => Some(UnaryFunc::Ln),
+                            "log" => Some(UnaryFunc::Log10),
+                            "sqrt" => Some(UnaryFunc::Sqrt),
+                            "cbrt" => Some(UnaryFunc::Cbrt),
+                            "abs" => Some(UnaryFunc::Abs),
+                            "exp" => Some(UnaryFunc::Exp),
+                            "mod" => None, // handled as binary op
+                            _ => None,
+                        };
+                        if let Some(f) = func {
+                            if need_mul {
+                                tokens.push(Token::BinaryOp(BinaryOp::Multiply));
+                            }
+                            tokens.push(Token::UnaryFunc(f));
+                            // Auto-insert left paren if not already there
+                            if i < chars.len() && chars[i] == '(' {
+                                // will be handled next iteration
+                            } else {
+                                tokens.push(Token::LeftParen);
+                            }
+                        } else if word_lower == "mod" {
+                            tokens.push(Token::BinaryOp(BinaryOp::Modulo));
+                        }
+                        // Unknown words are silently ignored
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Auto-close unclosed parens
+    let open = tokens.iter().filter(|t| matches!(t, Token::LeftParen)).count();
+    let close = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::RightParen))
+        .count();
+    for _ in 0..open.saturating_sub(close) {
+        tokens.push(Token::RightParen);
+    }
+
+    Ok(tokens)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,15 +557,42 @@ mod tests {
 
     #[test]
     fn basic_ops() {
-        assert_eq!(eval(&[Token::Number(2.0), Token::BinaryOp(BinaryOp::Add), Token::Number(3.0)]), 5.0);
-        assert_eq!(eval(&[Token::Number(10.0), Token::BinaryOp(BinaryOp::Subtract), Token::Number(4.0)]), 6.0);
-        assert_eq!(eval(&[Token::Number(3.0), Token::BinaryOp(BinaryOp::Multiply), Token::Number(7.0)]), 21.0);
-        assert_eq!(eval(&[Token::Number(15.0), Token::BinaryOp(BinaryOp::Divide), Token::Number(3.0)]), 5.0);
+        assert_eq!(
+            eval(&[
+                Token::Number(2.0),
+                Token::BinaryOp(BinaryOp::Add),
+                Token::Number(3.0)
+            ]),
+            5.0
+        );
+        assert_eq!(
+            eval(&[
+                Token::Number(10.0),
+                Token::BinaryOp(BinaryOp::Subtract),
+                Token::Number(4.0)
+            ]),
+            6.0
+        );
+        assert_eq!(
+            eval(&[
+                Token::Number(3.0),
+                Token::BinaryOp(BinaryOp::Multiply),
+                Token::Number(7.0)
+            ]),
+            21.0
+        );
+        assert_eq!(
+            eval(&[
+                Token::Number(15.0),
+                Token::BinaryOp(BinaryOp::Divide),
+                Token::Number(3.0)
+            ]),
+            5.0
+        );
     }
 
     #[test]
     fn operator_precedence() {
-        // 2 + 3 × 4 = 14
         let tokens = vec![
             Token::Number(2.0),
             Token::BinaryOp(BinaryOp::Add),
@@ -377,7 +605,6 @@ mod tests {
 
     #[test]
     fn parentheses() {
-        // (2 + 3) × 4 = 20
         let tokens = vec![
             Token::LeftParen,
             Token::Number(2.0),
@@ -392,7 +619,6 @@ mod tests {
 
     #[test]
     fn sin_degrees() {
-        // sin(30) = 0.5
         let tokens = vec![
             Token::UnaryFunc(UnaryFunc::Sin),
             Token::LeftParen,
@@ -405,18 +631,15 @@ mod tests {
 
     #[test]
     fn postfix_ops() {
-        // 5² = 25
         let tokens = vec![Token::Number(5.0), Token::PostfixOp(PostfixOp::Square)];
         assert_eq!(eval(&tokens), 25.0);
 
-        // 5! = 120
         let tokens = vec![Token::Number(5.0), Token::PostfixOp(PostfixOp::Factorial)];
         assert_eq!(eval(&tokens), 120.0);
     }
 
     #[test]
     fn power_right_assoc() {
-        // 2^3^2 = 2^(3^2) = 2^9 = 512
         let tokens = vec![
             Token::Number(2.0),
             Token::BinaryOp(BinaryOp::Power),
@@ -429,13 +652,12 @@ mod tests {
 
     #[test]
     fn constants() {
-        let tokens = vec![Token::Constant("π", PI)];
+        let tokens = vec![Token::Constant("\u{03c0}", PI)];
         assert!((eval(&tokens) - PI).abs() < 1e-10);
     }
 
     #[test]
     fn complex_expression() {
-        // 2 + sin(30) × 5 = 2 + 0.5 × 5 = 4.5
         let tokens = vec![
             Token::Number(2.0),
             Token::BinaryOp(BinaryOp::Add),
@@ -452,7 +674,11 @@ mod tests {
 
     #[test]
     fn division_by_zero() {
-        let tokens = vec![Token::Number(1.0), Token::BinaryOp(BinaryOp::Divide), Token::Number(0.0)];
+        let tokens = vec![
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Divide),
+            Token::Number(0.0),
+        ];
         assert!(evaluate(&tokens, AngleMode::Degrees).is_err());
     }
 
@@ -463,5 +689,40 @@ mod tests {
         assert_eq!(format_number(-42.0), "-42");
         assert_eq!(format_number(3.14), "3.14");
         assert_eq!(format_number(0.5), "0.5");
+    }
+
+    #[test]
+    fn parse_simple() {
+        let tokens = parse_expression("2 + 3").unwrap();
+        let result = evaluate(&tokens, AngleMode::Degrees).unwrap();
+        assert_eq!(result, 5.0);
+    }
+
+    #[test]
+    fn parse_implicit_multiply() {
+        let tokens = parse_expression("2(3+4)").unwrap();
+        let result = evaluate(&tokens, AngleMode::Degrees).unwrap();
+        assert_eq!(result, 14.0);
+    }
+
+    #[test]
+    fn parse_percent_of() {
+        let tokens = parse_expression("50% of 200").unwrap();
+        let result = evaluate(&tokens, AngleMode::Degrees).unwrap();
+        assert_eq!(result, 100.0);
+    }
+
+    #[test]
+    fn parse_functions() {
+        let tokens = parse_expression("sin(30)").unwrap();
+        let result = evaluate(&tokens, AngleMode::Degrees).unwrap();
+        assert!((result - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn parse_pi() {
+        let tokens = parse_expression("2pi").unwrap();
+        let result = evaluate(&tokens, AngleMode::Degrees).unwrap();
+        assert!((result - 2.0 * PI).abs() < 1e-10);
     }
 }

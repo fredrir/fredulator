@@ -1,7 +1,40 @@
+#![allow(dead_code)]
+
 use crate::eval::{
     apply_postfix, apply_unary, evaluate, format_number, token_display, AngleMode, BinaryOp,
     PostfixOp, Token, UnaryFunc,
 };
+
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub expression: String,
+    pub result_text: String,
+    pub result: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemorySlot {
+    pub label: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PinnedCalc {
+    pub label: String,
+    pub expression: String,
+    pub result: f64,
+}
+
+#[derive(Debug, Clone)]
+struct Snapshot {
+    tokens: Vec<Token>,
+    buffer: String,
+    result: Option<f64>,
+    last_value: f64,
+    error: Option<String>,
+    open_parens: usize,
+    user_calculated: bool,
+}
 
 #[derive(Debug)]
 pub struct Engine {
@@ -14,6 +47,11 @@ pub struct Engine {
     error: Option<String>,
     open_parens: usize,
     user_calculated: bool,
+    // Enhanced features
+    undo_stack: Vec<Snapshot>,
+    pub history: Vec<HistoryEntry>,
+    pub memory_slots: Vec<MemorySlot>,
+    pub pinned: Vec<PinnedCalc>,
 }
 
 impl Engine {
@@ -28,10 +66,73 @@ impl Engine {
             error: None,
             open_parens: 0,
             user_calculated: false,
+            undo_stack: Vec::new(),
+            history: Vec::new(),
+            memory_slots: Vec::new(),
+            pinned: Vec::new(),
         }
     }
 
-    /// The main large display: shows expression during input, result after =.
+    fn save_snapshot(&mut self) {
+        self.undo_stack.push(Snapshot {
+            tokens: self.tokens.clone(),
+            buffer: self.buffer.clone(),
+            result: self.result,
+            last_value: self.last_value,
+            error: self.error.clone(),
+            open_parens: self.open_parens,
+            user_calculated: self.user_calculated,
+        });
+        if self.undo_stack.len() > 100 {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(snap) = self.undo_stack.pop() {
+            self.tokens = snap.tokens;
+            self.buffer = snap.buffer;
+            self.result = snap.result;
+            self.last_value = snap.last_value;
+            self.error = snap.error;
+            self.open_parens = snap.open_parens;
+            self.user_calculated = snap.user_calculated;
+        }
+    }
+
+    /// Try to evaluate current expression without modifying state (for live preview).
+    pub fn auto_eval(&self) -> Option<String> {
+        if self.error.is_some() || self.user_calculated {
+            return None;
+        }
+        let mut tokens = self.tokens.clone();
+        if !self.buffer.is_empty() {
+            if let Ok(val) = self.buffer.parse::<f64>() {
+                tokens.push(Token::Number(val));
+            }
+        }
+        if tokens.is_empty() {
+            return None;
+        }
+        // Auto-close parens for preview
+        for _ in 0..self.open_parens {
+            tokens.push(Token::RightParen);
+        }
+        match evaluate(&tokens, self.angle_mode) {
+            Ok(val) => {
+                let text = format_number(val);
+                // Only show preview if it differs from the current display
+                let current = self.main_display_text();
+                if text != current {
+                    Some(text)
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
     pub fn main_display_text(&self) -> String {
         if let Some(ref err) = self.error {
             return err.clone();
@@ -41,7 +142,6 @@ impl Engine {
                 return format_number(result);
             }
         }
-        // During input: show expression being built
         let mut s = String::new();
         for token in &self.tokens {
             s.push_str(&token_display(token));
@@ -53,7 +153,6 @@ impl Engine {
         s
     }
 
-    /// The secondary display: shows expression only after calculation.
     pub fn secondary_display_text(&self) -> String {
         if self.user_calculated && self.result.is_some() {
             let mut s = String::new();
@@ -103,15 +202,24 @@ impl Engine {
         self.memory != 0.0
     }
 
-    // --- Input methods ---
+    pub fn current_value(&self) -> f64 {
+        if let Some(r) = self.result {
+            r
+        } else if let Ok(v) = self.buffer.parse::<f64>() {
+            v
+        } else {
+            self.last_value
+        }
+    }
 
+    // --- Input methods ---
     pub fn input_digit(&mut self, digit: char) {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.start_fresh_if_needed();
 
-        // Implicit multiply: digit after constant/paren/postfix
         if self.buffer.is_empty() {
             if matches!(
                 self.tokens.last(),
@@ -137,6 +245,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.start_fresh_if_needed();
         if self.buffer.is_empty() {
             self.buffer.push('0');
@@ -150,6 +259,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
 
         // Unary minus
         if op == BinaryOp::Subtract && self.buffer.is_empty() && self.result.is_none() {
@@ -164,7 +274,6 @@ impl Engine {
             }
         }
 
-        // Ignore op at start with no value (except minus handled above)
         if self.tokens.is_empty() && self.buffer.is_empty() && self.result.is_none() {
             return;
         }
@@ -177,7 +286,6 @@ impl Engine {
             self.finalize_buffer();
         }
 
-        // Replace consecutive operators
         if matches!(self.tokens.last(), Some(Token::BinaryOp(_))) {
             self.tokens.pop();
         }
@@ -188,8 +296,8 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
 
-        // Apply to result immediately
         if let Some(result) = self.result.take() {
             self.tokens.clear();
             self.user_calculated = false;
@@ -210,7 +318,6 @@ impl Engine {
 
         self.start_fresh_if_needed();
 
-        // Implicit multiply: func after number/constant/paren
         if !self.buffer.is_empty() {
             self.finalize_buffer();
             self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
@@ -230,6 +337,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
 
         if let Some(result) = self.result.take() {
             self.tokens.clear();
@@ -250,7 +358,6 @@ impl Engine {
         self.finalize_buffer();
         self.tokens.push(Token::PostfixOp(op));
 
-        // Auto-evaluate for immediate feedback
         match evaluate(&self.tokens, self.angle_mode) {
             Ok(val) => {
                 self.result = Some(val);
@@ -264,6 +371,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.start_fresh_if_needed();
 
         if !self.buffer.is_empty() {
@@ -284,6 +392,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.start_fresh_if_needed();
 
         if !self.buffer.is_empty() {
@@ -304,6 +413,7 @@ impl Engine {
         if self.error.is_some() || self.open_parens == 0 {
             return;
         }
+        self.save_snapshot();
         self.finalize_buffer();
         self.tokens.push(Token::RightParen);
         self.open_parens -= 1;
@@ -313,6 +423,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.finalize_buffer();
         self.tokens.push(Token::BinaryOp(BinaryOp::Multiply));
         self.tokens.push(Token::Number(10.0));
@@ -323,6 +434,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         self.finalize_buffer();
         for _ in 0..self.open_parens {
             self.tokens.push(Token::RightParen);
@@ -331,6 +443,20 @@ impl Engine {
 
         match evaluate(&self.tokens, self.angle_mode) {
             Ok(val) => {
+                // Save to history
+                let mut expr_str = String::new();
+                for token in &self.tokens {
+                    expr_str.push_str(&token_display(token));
+                }
+                self.history.push(HistoryEntry {
+                    expression: expr_str,
+                    result_text: format_number(val),
+                    result: val,
+                });
+                if self.history.len() > 200 {
+                    self.history.remove(0);
+                }
+
                 self.result = Some(val);
                 self.last_value = val;
                 self.error = None;
@@ -361,6 +487,7 @@ impl Engine {
         if self.result.is_some() || self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         if !self.buffer.is_empty() {
             self.buffer.pop();
         } else if let Some(token) = self.tokens.pop() {
@@ -383,6 +510,7 @@ impl Engine {
         if self.error.is_some() {
             return;
         }
+        self.save_snapshot();
         if !self.buffer.is_empty() {
             if self.buffer.starts_with('-') {
                 self.buffer.remove(0);
@@ -392,7 +520,7 @@ impl Engine {
         }
     }
 
-    // --- Memory ---
+    // --- Memory (legacy single-value for backward compat) ---
 
     pub fn memory_clear(&mut self) {
         self.memory = 0.0;
@@ -418,6 +546,70 @@ impl Engine {
         } else if let Ok(v) = self.buffer.parse::<f64>() {
             self.memory -= v;
         }
+    }
+
+    // --- Multi-slot memory ---
+
+    pub fn memory_store(&mut self, label: String) {
+        let val = self.current_value();
+        self.memory_slots.push(MemorySlot { label, value: val });
+    }
+
+    pub fn memory_recall_slot(&mut self, index: usize) {
+        if let Some(slot) = self.memory_slots.get(index) {
+            let val = slot.value;
+            self.start_fresh_if_needed();
+            self.buffer = format_number(val);
+            self.last_value = val;
+        }
+    }
+
+    pub fn memory_delete_slot(&mut self, index: usize) {
+        if index < self.memory_slots.len() {
+            self.memory_slots.remove(index);
+        }
+    }
+
+    // --- Pinned calculations ---
+
+    pub fn pin_result(&mut self, label: String) {
+        let val = self.current_value();
+        let expr = self.expression_text();
+        self.pinned.push(PinnedCalc {
+            label,
+            expression: expr,
+            result: val,
+        });
+    }
+
+    pub fn delete_pin(&mut self, index: usize) {
+        if index < self.pinned.len() {
+            self.pinned.remove(index);
+        }
+    }
+
+    pub fn recall_pinned(&mut self, index: usize) {
+        if let Some(pin) = self.pinned.get(index) {
+            let val = pin.result;
+            self.start_fresh_if_needed();
+            self.buffer = format_number(val);
+            self.last_value = val;
+        }
+    }
+
+    // --- History ---
+
+    pub fn recall_history(&mut self, index: usize) {
+        if let Some(entry) = self.history.get(index) {
+            let val = entry.result;
+            self.start_fresh_if_needed();
+            self.buffer = format_number(val);
+            self.last_value = val;
+        }
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     pub fn toggle_angle_mode(&mut self) {
@@ -521,8 +713,8 @@ mod tests {
     #[test]
     fn constant_display() {
         let mut e = Engine::new();
-        e.input_constant(std::f64::consts::PI, "π");
-        assert!(e.expression_text().contains('π'));
+        e.input_constant(std::f64::consts::PI, "\u{03c0}");
+        assert!(e.expression_text().contains('\u{03c0}'));
     }
 
     #[test]
@@ -573,6 +765,60 @@ mod tests {
         e.input_digit('4');
         e.calculate();
         assert_eq!(e.result_text(), "20");
-        assert_eq!(e.expression_text(), "(2+3)×4=");
+        assert_eq!(e.expression_text(), "(2+3)\u{00d7}4=");
+    }
+
+    #[test]
+    fn undo_works() {
+        let mut e = Engine::new();
+        e.input_digit('5');
+        e.input_digit('3');
+        e.undo();
+        assert_eq!(e.main_display_text(), "5");
+    }
+
+    #[test]
+    fn history_recorded() {
+        let mut e = Engine::new();
+        e.input_digit('2');
+        e.input_binary_op(BinaryOp::Add);
+        e.input_digit('3');
+        e.calculate();
+        assert_eq!(e.history.len(), 1);
+        assert_eq!(e.history[0].result, 5.0);
+    }
+
+    #[test]
+    fn auto_eval_preview() {
+        let mut e = Engine::new();
+        e.input_digit('2');
+        e.input_binary_op(BinaryOp::Add);
+        e.input_digit('3');
+        assert_eq!(e.auto_eval(), Some("5".to_string()));
+    }
+
+    #[test]
+    fn memory_slots() {
+        let mut e = Engine::new();
+        e.input_digit('4');
+        e.input_digit('2');
+        e.calculate();
+        e.memory_store("test".to_string());
+        assert_eq!(e.memory_slots.len(), 1);
+        assert_eq!(e.memory_slots[0].value, 42.0);
+        e.clear();
+        e.memory_recall_slot(0);
+        assert_eq!(e.result_text(), "42");
+    }
+
+    #[test]
+    fn pinned_calcs() {
+        let mut e = Engine::new();
+        e.input_digit('1');
+        e.input_digit('0');
+        e.calculate();
+        e.pin_result("budget".to_string());
+        assert_eq!(e.pinned.len(), 1);
+        assert_eq!(e.pinned[0].label, "budget");
     }
 }
