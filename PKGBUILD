@@ -32,6 +32,8 @@ build() {
 check() {
     cd "$srcdir/$_pkgname"
     cargo test --frozen --release
+
+    ./target/release/fredulator --help >/dev/null 2>&1 || true
 }
 
 package() {

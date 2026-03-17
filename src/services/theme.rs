@@ -898,3 +898,177 @@ impl ThemeManager {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_config_name_all_valid() {
+        assert_eq!(Theme::from_config_name("native"), Some(Theme::Native));
+        assert_eq!(Theme::from_config_name("void"), Some(Theme::Void));
+        assert_eq!(Theme::from_config_name("frosted"), Some(Theme::Frosted));
+        assert_eq!(Theme::from_config_name("riced"), Some(Theme::Riced));
+        assert_eq!(Theme::from_config_name("neon"), Some(Theme::Neon));
+        assert_eq!(Theme::from_config_name("terminal"), Some(Theme::Terminal));
+        assert_eq!(Theme::from_config_name("solarized"), Some(Theme::Solarized));
+    }
+
+    #[test]
+    fn from_config_name_case_insensitive() {
+        assert_eq!(Theme::from_config_name("VOID"), Some(Theme::Void));
+        assert_eq!(Theme::from_config_name("Frosted"), Some(Theme::Frosted));
+        assert_eq!(Theme::from_config_name("NEON"), Some(Theme::Neon));
+    }
+
+    #[test]
+    fn from_config_name_invalid() {
+        assert_eq!(Theme::from_config_name(""), None);
+        assert_eq!(Theme::from_config_name("dracula"), None);
+        assert_eq!(Theme::from_config_name("custom"), None);
+    }
+
+    #[test]
+    fn next_cycles_through_all() {
+        let mut t = Theme::Native;
+        let start = t;
+        for _ in 0..Theme::ALL.len() {
+            t = t.next();
+        }
+        assert_eq!(t, start, "cycling through all themes should return to start");
+    }
+
+    #[test]
+    fn next_wraps_from_last() {
+        assert_eq!(Theme::Solarized.next(), Theme::Native);
+    }
+
+    #[test]
+    fn next_advances() {
+        assert_eq!(Theme::Native.next(), Theme::Void);
+        assert_eq!(Theme::Void.next(), Theme::Frosted);
+    }
+
+    #[test]
+    fn theme_names() {
+        assert_eq!(Theme::Native.name(), "Native");
+        assert_eq!(Theme::Void.name(), "Void");
+        assert_eq!(Theme::Frosted.name(), "Frosted");
+        assert_eq!(Theme::Riced.name(), "Riced");
+        assert_eq!(Theme::Neon.name(), "Neon");
+        assert_eq!(Theme::Terminal.name(), "Terminal");
+        assert_eq!(Theme::Solarized.name(), "Solarized");
+    }
+
+    #[test]
+    fn accent_colors_are_hex() {
+        for theme in Theme::ALL {
+            let color = theme.accent_color();
+            assert!(color.starts_with('#'), "{:?} accent should start with #", theme);
+            assert_eq!(color.len(), 7, "{:?} accent should be #RRGGBB", theme);
+        }
+    }
+
+    #[test]
+    fn all_has_seven_themes() {
+        assert_eq!(Theme::ALL.len(), 7);
+    }
+
+    #[test]
+    fn accent_override_css_contains_color() {
+        let css = accent_override_css("#ff0000");
+        assert!(css.contains("#ff0000"));
+        assert!(css.contains(".op-button"));
+        assert!(css.contains(".equals-button"));
+    }
+
+    #[test]
+    fn background_override_css_contains_color() {
+        let css = background_override_css("#123456");
+        assert!(css.contains("#123456"));
+        assert!(css.contains(".main-window"));
+    }
+
+    #[test]
+    fn font_override_css_sets_font() {
+        let css = font_override_css("Fira Code");
+        assert!(css.contains("Fira Code"));
+    }
+
+    #[test]
+    fn button_style_flat() {
+        let css = button_style_css("flat", 12);
+        assert!(css.contains("border-radius: 0"));
+    }
+
+    #[test]
+    fn button_style_outlined() {
+        let css = button_style_css("outlined", 8);
+        assert!(css.contains("transparent"));
+        assert!(css.contains("8px"));
+    }
+
+    #[test]
+    fn button_style_rounded_uses_radius() {
+        let css = button_style_css("rounded", 16);
+        assert!(css.contains("16px"));
+    }
+
+    #[test]
+    fn layout_override_compact_mode() {
+        let layout = LayoutConfig {
+            compact_mode: true,
+            ..LayoutConfig::default()
+        };
+        let css = layout_override_css(&layout);
+        assert!(css.contains("min-height: 60px"));
+        assert!(css.contains("font-size: 36px"));
+    }
+
+    #[test]
+    fn layout_override_small_buttons() {
+        let layout = LayoutConfig {
+            button_size: "small".into(),
+            ..LayoutConfig::default()
+        };
+        let css = layout_override_css(&layout);
+        assert!(css.contains("min-height: 36px"));
+    }
+
+    #[test]
+    fn layout_override_large_buttons() {
+        let layout = LayoutConfig {
+            button_size: "large".into(),
+            ..LayoutConfig::default()
+        };
+        let css = layout_override_css(&layout);
+        assert!(css.contains("min-height: 56px"));
+    }
+
+    #[test]
+    fn feedback_css_no_animations() {
+        let feedback = FeedbackConfig {
+            animations: false,
+            ..FeedbackConfig::default()
+        };
+        let css = feedback_css(&feedback);
+        assert!(css.contains("transition-duration: 0s"));
+    }
+
+    #[test]
+    fn feedback_css_with_animations_empty() {
+        let feedback = FeedbackConfig::default();
+        let css = feedback_css(&feedback);
+        assert!(css.is_empty());
+    }
+
+    #[test]
+    fn colors_to_css_uses_all_fields() {
+        let colors = ThemeColors::default();
+        let css = colors_to_css(&colors);
+        assert!(css.contains(&colors.window_bg));
+        assert!(css.contains(&colors.display_fg));
+        assert!(css.contains(&colors.op_bg));
+        assert!(css.contains(&colors.panel_accent));
+    }
+}

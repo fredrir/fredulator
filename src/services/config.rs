@@ -339,6 +339,83 @@ impl Default for PluginsConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_roundtrip() {
+        let config = Config::default();
+        let toml_str = toml::to_string(&config).unwrap();
+        let back: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(back.behavior.angle_mode, "degrees");
+        assert_eq!(back.behavior.auto_evaluate, true);
+        assert_eq!(back.behavior.operator_precedence, true);
+        assert_eq!(back.history.max_entries, 200);
+        assert_eq!(back.layout.button_radius, 12);
+        assert_eq!(back.theme.name, "native");
+        assert_eq!(back.window.default_width, 360);
+        assert_eq!(back.window.default_height, 580);
+    }
+
+    #[test]
+    fn partial_toml_uses_defaults() {
+        let toml_str = r#"
+[behavior]
+angle_mode = "radians"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.behavior.angle_mode, "radians");
+        assert_eq!(config.behavior.auto_evaluate, true);
+        assert_eq!(config.history.max_entries, 200);
+        assert_eq!(config.theme.name, "native");
+    }
+
+    #[test]
+    fn empty_toml_gives_default() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.behavior.angle_mode, "degrees");
+        assert_eq!(config.layout.button_spacing, 6);
+    }
+
+    #[test]
+    fn generated_config_parses_back() {
+        let generated = generate_default_config();
+        let config: Config = toml::from_str(&generated).unwrap();
+        assert_eq!(config.theme.name, "native");
+        assert_eq!(config.behavior.angle_mode, "degrees");
+        assert_eq!(config.history.max_entries, 200);
+    }
+
+    #[test]
+    fn theme_colors_default_values() {
+        let colors = ThemeColors::default();
+        assert_eq!(colors.window_bg, "#000000");
+        assert_eq!(colors.display_fg, "#ffffff");
+        assert_eq!(colors.op_bg, "#ff9500");
+    }
+
+    #[test]
+    fn session_config_default() {
+        let sc = SessionConfig::default();
+        assert!(!sc.restore_session);
+    }
+
+    #[test]
+    fn plugins_config_default_empty() {
+        let pc = PluginsConfig::default();
+        assert!(pc.functions.is_empty());
+    }
+
+    #[test]
+    fn window_config_defaults() {
+        let wc = WindowConfig::default();
+        assert!(!wc.always_on_top);
+        assert_eq!(wc.opacity, 1.0);
+        assert!(!wc.remember_geometry);
+    }
+}
+
 fn generate_default_config() -> String {
     r##"# Fredulator Configuration
 # ~/.config/fredulator/config.toml
