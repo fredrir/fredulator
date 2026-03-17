@@ -8,37 +8,34 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/fredrir/fredulator'
 license=('MIT')
 depends=('gtk3')
-makedepends=('cargo' 'git')
+makedepends=('cargo' 'rust' 'git')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 source=("git+$url.git")
 sha256sums=('SKIP')
 
 pkgver() {
-    cd "$_pkgname"
+    cd "$srcdir/$_pkgname"
     printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
 }
 
 prepare() {
-    cd "$_pkgname"
-    export RUSTUP_TOOLCHAIN=stable
-    cargo fetch --target "$(rustc -vV | sed -n 's/host: //p')"
+    cd "$srcdir/$_pkgname"
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-    cd "$_pkgname"
-    export RUSTUP_TOOLCHAIN=stable
-    cargo build --release
+    cd "$srcdir/$_pkgname"
+    cargo build --frozen --release
 }
 
 check() {
-    cd "$_pkgname"
-    export RUSTUP_TOOLCHAIN=stable
-    cargo test --release
+    cd "$srcdir/$_pkgname"
+    cargo test --frozen --release
 }
 
 package() {
-    cd "$_pkgname"
+    cd "$srcdir/$_pkgname"
     install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/$_pkgname"
     install -Dm644 "$_pkgname.desktop" "$pkgdir/usr/share/applications/$_pkgname.desktop"
 }
