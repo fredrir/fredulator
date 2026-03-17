@@ -34,7 +34,6 @@ pub enum Message {
 
     ToggleScientific,
     ToggleTheme,
-    SetTheme(usize),
 
     ToggleHistory,
     ToggleMemory,
@@ -49,9 +48,6 @@ pub enum Message {
     OpenTools,
     OpenNotes,
     CloseMode,
-    SetConvertCategory(usize),
-    ConvertSwap,
-
     ShowHelp,
     Quit,
 

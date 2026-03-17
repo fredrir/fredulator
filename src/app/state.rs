@@ -30,7 +30,6 @@ pub struct AppState {
     pub mode_panel_visible: bool,
     pub active_mode: Option<ModePanel>,
     pub history_search: String,
-    pub convert_category: usize,
     pub session_id: u64,
     pub config: Config,
 }
@@ -47,7 +46,6 @@ impl AppState {
             mode_panel_visible: false,
             active_mode: None,
             history_search: String::new(),
-            convert_category: 0,
             session_id,
             config,
         };
@@ -64,10 +62,6 @@ impl AppState {
 
     pub fn engine_mut(&mut self) -> &mut Engine {
         &mut self.tabs[self.active_tab].engine
-    }
-
-    pub fn active_tab_name(&self) -> &str {
-        &self.tabs[self.active_tab].name
     }
 
     pub fn eval_settings(&self) -> EvalSettings {

@@ -140,16 +140,12 @@ pub fn apply_unary(func: UnaryFunc, a: f64, angle_mode: AngleMode) -> Result<f64
         UnaryFunc::Log10 => {
             if a <= 0.0 { Err("Domain error".into()) } else { Ok(a.log10()) }
         }
-        UnaryFunc::Log2 => {
-            if a <= 0.0 { Err("Domain error".into()) } else { Ok(a.log2()) }
-        }
         UnaryFunc::Sqrt => {
             if a < 0.0 { Err("Domain error".into()) } else { Ok(a.sqrt()) }
         }
         UnaryFunc::Cbrt => Ok(a.cbrt()),
         UnaryFunc::Abs => Ok(a.abs()),
         UnaryFunc::Exp => Ok(a.exp()),
-        UnaryFunc::TenPow => Ok(10.0_f64.powf(a)),
     }
 }
 

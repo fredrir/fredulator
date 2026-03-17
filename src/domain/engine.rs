@@ -175,19 +175,6 @@ impl Engine {
         s
     }
 
-    pub fn result_text(&self) -> String {
-        if let Some(ref err) = self.error {
-            return err.clone();
-        }
-        if let Some(result) = self.result {
-            return format_number_default(result);
-        }
-        if !self.buffer.is_empty() {
-            return self.buffer.clone();
-        }
-        format_number_default(self.last_value)
-    }
-
     pub fn angle_mode(&self) -> AngleMode {
         self.angle_mode
     }
@@ -466,42 +453,10 @@ impl Engine {
         let val = self.current_value();
         self.memory_slots.push(MemorySlot { label, value: val });
     }
-    pub fn memory_recall_slot(&mut self, index: usize) {
-        if let Some(slot) = self.memory_slots.get(index) {
-            let val = slot.value;
-            self.start_fresh_if_needed();
-            self.buffer = format_number_default(val);
-            self.last_value = val;
-        }
-    }
-    pub fn memory_delete_slot(&mut self, index: usize) {
-        if index < self.memory_slots.len() { self.memory_slots.remove(index); }
-    }
-
     pub fn pin_result(&mut self, label: String) {
         let val = self.current_value();
         let expr = self.expression_text();
         self.pinned.push(PinnedCalc { label, expression: expr, result: val });
-    }
-    pub fn delete_pin(&mut self, index: usize) {
-        if index < self.pinned.len() { self.pinned.remove(index); }
-    }
-    pub fn recall_pinned(&mut self, index: usize) {
-        if let Some(pin) = self.pinned.get(index) {
-            let val = pin.result;
-            self.start_fresh_if_needed();
-            self.buffer = format_number_default(val);
-            self.last_value = val;
-        }
-    }
-
-    pub fn recall_history(&mut self, index: usize) {
-        if let Some(entry) = self.history.get(index) {
-            let val = entry.result;
-            self.start_fresh_if_needed();
-            self.buffer = format_number_default(val);
-            self.last_value = val;
-        }
     }
     pub fn clear_history(&mut self) { self.history.clear(); }
 
@@ -547,7 +502,6 @@ mod tests {
         e.input_binary_op(BinaryOp::Add);
         e.input_digit('3');
         assert_eq!(e.expression_text(), "2+3");
-        assert_eq!(e.result_text(), "3");
     }
 
     #[test]
@@ -558,7 +512,7 @@ mod tests {
         e.input_digit('3');
         e.calculate(0, 0);
         assert_eq!(e.expression_text(), "5+3=");
-        assert_eq!(e.result_text(), "8");
+        assert_eq!(e.main_display_text(), "8");
     }
 
     #[test]
@@ -571,7 +525,7 @@ mod tests {
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('2');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "16");
+        assert_eq!(e.main_display_text(), "16");
     }
 
     #[test]
@@ -583,7 +537,7 @@ mod tests {
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('4');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "14");
+        assert_eq!(e.main_display_text(), "14");
     }
 
     #[test]
@@ -598,7 +552,7 @@ mod tests {
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('4');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "20");
+        assert_eq!(e.main_display_text(), "20");
     }
 
     #[test]
@@ -608,8 +562,7 @@ mod tests {
         e.input_digit('0');
         e.calculate(0, 0);
         e.input_unary_func(UnaryFunc::Sin);
-        let val: f64 = e.result_text().parse().unwrap();
-        assert!((val - 0.5).abs() < 1e-10);
+        assert!((e.current_value() - 0.5).abs() < 1e-10);
     }
 
     #[test]
@@ -617,7 +570,7 @@ mod tests {
         let mut e = engine();
         e.input_digit('5');
         e.input_postfix_op(PostfixOp::Square);
-        assert_eq!(e.result_text(), "25");
+        assert_eq!(e.current_value(), 25.0);
     }
 
     #[test]
@@ -633,7 +586,7 @@ mod tests {
         e.input_binary_op(BinaryOp::Subtract);
         e.input_digit('5');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "-5");
+        assert_eq!(e.main_display_text(), "-5");
     }
 
     #[test]
@@ -646,7 +599,7 @@ mod tests {
         assert!(e.has_memory());
         e.clear();
         e.memory_recall();
-        assert_eq!(e.result_text(), "42");
+        assert_eq!(e.main_display_text(), "42");
         e.memory_clear();
         assert!(!e.has_memory());
     }
@@ -658,9 +611,9 @@ mod tests {
         e.input_binary_op(BinaryOp::Divide);
         e.input_digit('0');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "Division by zero");
+        assert_eq!(e.main_display_text(), "Division by zero");
         e.clear();
-        assert_eq!(e.result_text(), "0");
+        assert_eq!(e.main_display_text(), "0");
     }
 
     #[test]
@@ -674,7 +627,7 @@ mod tests {
         e.input_binary_op(BinaryOp::Multiply);
         e.input_digit('4');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "20");
+        assert_eq!(e.main_display_text(), "20");
     }
 
     #[test]
@@ -736,9 +689,6 @@ mod tests {
         e.memory_store("test".to_string());
         assert_eq!(e.memory_slots.len(), 1);
         assert_eq!(e.memory_slots[0].value, 42.0);
-        e.clear();
-        e.memory_recall_slot(0);
-        assert_eq!(e.result_text(), "42");
     }
 
     #[test]
@@ -782,7 +732,7 @@ mod tests {
         e.input_digit('0');
         e.calculate(0, 0);
         e.input_digit('3');
-        assert_eq!(e.result_text(), "Division by zero");
+        assert_eq!(e.main_display_text(), "Division by zero");
     }
 
     #[test]
@@ -792,6 +742,6 @@ mod tests {
         e.input_ee();
         e.input_digit('3');
         e.calculate(0, 0);
-        assert_eq!(e.result_text(), "5000");
+        assert_eq!(e.main_display_text(), "5000");
     }
 }

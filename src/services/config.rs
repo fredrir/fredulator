@@ -29,13 +29,6 @@ pub fn load() -> Config {
     }
 }
 
-pub fn save(config: &Config) {
-    let _ = fs::create_dir_all(dir());
-    if let Ok(s) = toml::to_string_pretty(config) {
-        let _ = fs::write(path(), s);
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {

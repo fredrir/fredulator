@@ -820,10 +820,6 @@ impl ThemeManager {
         m
     }
 
-    pub fn current(&self) -> Theme {
-        self.current
-    }
-
     pub fn set_theme(
         &mut self,
         theme: Theme,

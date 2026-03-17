@@ -23,12 +23,10 @@ pub enum UnaryFunc {
     Tanh,
     Ln,
     Log10,
-    Log2,
     Sqrt,
     Cbrt,
     Abs,
     Exp,
-    TenPow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -123,12 +121,10 @@ impl UnaryFunc {
             Self::Tanh => "tanh",
             Self::Ln => "ln",
             Self::Log10 => "log",
-            Self::Log2 => "log\u{2082}",
             Self::Sqrt => "\u{221a}",
             Self::Cbrt => "\u{00b3}\u{221a}",
             Self::Abs => "abs",
             Self::Exp => "e\u{02e3}",
-            Self::TenPow => "10\u{02e3}",
         }
     }
 }

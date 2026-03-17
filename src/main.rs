@@ -895,7 +895,6 @@ fn wire_keyboard(
     let p_memory_btn = calc_ui.panel_memory_btn.clone();
     let p_pinned_btn = calc_ui.panel_pinned_btn.clone();
     let angle_btn = calc_ui.angle_btn.clone();
-    let menu_theme_btns = calc_ui.menu_theme_btns.clone();
     let tab_bar = calc_ui.tab_bar.clone();
 
     calc_ui.window.connect_key_press_event(move |_, event| {
@@ -1083,19 +1082,6 @@ fn wire_keyboard(
                 SideEffect::ToggleTheme => {
                     let s = state_c.borrow();
                     theme_mgr_c.borrow_mut().toggle(&s.config.theme, &s.config.layout, &s.config.feedback);
-                }
-                SideEffect::SetTheme(idx) => {
-                    let s = state_c.borrow();
-                    if idx < Theme::ALL.len() {
-                        theme_mgr_c.borrow_mut().set_theme(Theme::ALL[idx], &s.config.theme, &s.config.layout, &s.config.feedback);
-                        for (btn, i) in &menu_theme_btns {
-                            if *i == idx {
-                                btn.style_context().add_class("menu-item-active");
-                            } else {
-                                btn.style_context().remove_class("menu-item-active");
-                            }
-                        }
-                    }
                 }
                 SideEffect::TogglePanel => {
                     let s = state_c.borrow();

@@ -10,7 +10,6 @@ pub enum SideEffect {
     UpdateTabs,
     ToggleScientific(bool),
     ToggleTheme,
-    SetTheme(usize),
     TogglePanel,
     ToggleModePanel,
     RefreshHistory,
@@ -173,9 +172,6 @@ pub fn update(state: &mut AppState, msg: Message) -> Vec<SideEffect> {
         Message::ToggleTheme => {
             vec![SideEffect::ToggleTheme]
         }
-        Message::SetTheme(idx) => {
-            vec![SideEffect::SetTheme(idx)]
-        }
         Message::ToggleHistory => {
             if state.panel_visible && state.active_panel == Panel::History {
                 state.panel_visible = false;
@@ -249,13 +245,6 @@ pub fn update(state: &mut AppState, msg: Message) -> Vec<SideEffect> {
                 state.engine_mut().clear();
                 vec![SideEffect::UpdateDisplay]
             }
-        }
-        Message::SetConvertCategory(idx) => {
-            state.convert_category = idx;
-            vec![SideEffect::Noop]
-        }
-        Message::ConvertSwap => {
-            vec![SideEffect::Noop]
         }
         Message::ShowHelp => {
             vec![SideEffect::ShowHelp]
@@ -364,7 +353,7 @@ mod tests {
         update(&mut s, Message::BinaryOp(crate::domain::types::BinaryOp::Add));
         update(&mut s, Message::Digit('3'));
         update(&mut s, Message::Equals);
-        assert_eq!(s.engine().result_text(), "5");
+        assert_eq!(s.engine().main_display_text(), "5");
         assert_eq!(s.engine().history.len(), 1);
     }
 
