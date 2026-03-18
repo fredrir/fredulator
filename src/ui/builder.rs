@@ -1,8 +1,8 @@
 use gtk::prelude::*;
 use gtk::{
-    Button, ComboBoxText, DrawingArea, Entry, Grid, Label, Notebook, Orientation, Revealer,
-    RevealerTransitionType, ScrolledWindow, Stack, StackTransitionType, TextView, Window,
-    WindowType,
+    Button, ComboBoxText, DrawingArea, Entry, Grid, Label, Notebook, Orientation, PolicyType,
+    Revealer, RevealerTransitionType, ScrolledWindow, Stack, StackTransitionType, TextView,
+    Window, WindowType,
 };
 
 use crate::domain::types::*;
@@ -122,8 +122,8 @@ pub fn build(config: &Config) -> CalculatorUI {
         b
     };
 
-    let tab_bar = gtk::Box::new(Orientation::Horizontal, 4);
-    tab_bar.style_context().add_class("tab-bar");
+    let outer_tab_bar = gtk::Box::new(Orientation::Horizontal, 4);
+    outer_tab_bar.style_context().add_class("tab-bar");
 
     let tab_add_btn = Button::with_label("+");
     tab_add_btn.style_context().add_class("tab-add");
@@ -133,8 +133,17 @@ pub fn build(config: &Config) -> CalculatorUI {
     menu_btn.style_context().add_class("menu-button");
     menu_btn.set_can_focus(false);
 
-    tab_bar.pack_end(&menu_btn, false, false, 0);
-    tab_bar.pack_end(&tab_add_btn, false, false, 0);
+    let tab_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    tab_scroll.set_policy(PolicyType::Automatic, PolicyType::Never);
+    tab_scroll.set_hexpand(true);
+
+    let tab_bar = gtk::Box::new(Orientation::Horizontal, 4);
+    tab_bar.style_context().add_class("tab-buttons-inner");
+    tab_scroll.add(&tab_bar);
+
+    outer_tab_bar.pack_start(&tab_scroll, true, true, 0);
+    outer_tab_bar.pack_end(&menu_btn, false, false, 0);
+    outer_tab_bar.pack_end(&tab_add_btn, false, false, 0);
 
     let menu_popover = gtk::Popover::new(Some(&menu_btn));
     let menu_box = gtk::Box::new(Orientation::Vertical, 2);
@@ -371,6 +380,8 @@ pub fn build(config: &Config) -> CalculatorUI {
 
     let d0 = mk("0", "digit-button", ButtonAction::Digit('0'), 1, 4, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&d0, 0, 4, 2, 1);
+    // Extra nav entry at col=0 so 'j' from the '1' button (col=0) reaches '0'
+    nav_buttons.push(NavButton { button: d0.clone(), col: 0, row: 4, scientific: false });
     let b = mk(".", "digit-button", ButtonAction::Decimal, 2, 4, false, &mut action_buttons, &mut nav_buttons);
     main_grid.attach(&b, 2, 4, 1, 1);
     let b = mk("=", "equals-button", ButtonAction::Equals, 3, 4, false, &mut action_buttons, &mut nav_buttons);
@@ -726,7 +737,7 @@ pub fn build(config: &Config) -> CalculatorUI {
     content_box.pack_start(&mode_panel_revealer, false, false, 0);
 
     let vbox = gtk::Box::new(Orientation::Vertical, 0);
-    vbox.pack_start(&tab_bar, false, false, 0);
+    vbox.pack_start(&outer_tab_bar, false, false, 0);
     vbox.pack_start(&content_box, true, true, 0);
 
     window.add(&vbox);

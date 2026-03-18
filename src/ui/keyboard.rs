@@ -183,7 +183,7 @@ fn default_scheme() -> HashMap<String, String> {
     m.insert("space".into(), "activate".into());
     m.insert("t".into(), "toggle_theme".into());
     m.insert("s".into(), "toggle_scientific".into());
-    m.insert("q".into(), "quit".into());
+    m.insert("Ctrl+q".into(), "quit".into());
     m.insert("u".into(), "undo".into());
     m.insert(";".into(), "open_menu".into());
     m.insert("S".into(), "memory_store".into());

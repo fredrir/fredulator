@@ -15,24 +15,6 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const HELP_TEXT: &str = "Calculator:  0-9 digits, + - * / ^ operators\n\
-  = / Enter    Calculate\n\
-  Backspace    Delete last\n\
-  Escape       Clear / close panel\n\
-  n            Negate (+/-)\n\
-  h j k l      Vim navigation\n\
-  Space        Activate button\n\
-  s            Toggle scientific\n\
-  t            Cycle theme\n\
-  u            Undo\n\
-  ;            Open menu\n\
-  S            Store to memory\n\n\
-Tabs:  Ctrl+T new, Ctrl+W close, Tab/Shift+Tab switch\n\n\
-Panels:  Ctrl+H history, Ctrl+M memory, Ctrl+P pinned\n\
-  Ctrl+S pin result, Ctrl+Shift+E export\n\n\
-Modes:  Ctrl+E converter, Ctrl+R tools, Ctrl+N notes\n\n\
-  q quit, ? help";
-
 fn main() {
     gtk::init().expect("Failed to initialize GTK");
 
@@ -147,133 +129,237 @@ fn update_display(state: &AppState, calc_ui: &CalculatorUI) {
     }
 }
 
-fn rebuild_tab_bar(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
-    for child in calc_ui.tab_bar.children() {
-        if child != calc_ui.tab_add_btn && child.style_context().has_class("tab-button") {
-            calc_ui.tab_bar.remove(&child);
-        }
-    }
+// ── Shared display update helper (for use inside closures) ──────────────────
 
+fn apply_update_display(
+    state: &Rc<RefCell<AppState>>,
+    expr: &gtk::Label,
+    result_l: &gtk::Label,
+    preview: &gtk::Label,
+    angle_btn: &Option<gtk::Button>,
+) {
     let s = state.borrow();
-    for (i, tab) in s.tabs.iter().enumerate() {
-        let btn = gtk::Button::with_label(&tab.name);
-        btn.style_context().add_class("tab-button");
-        btn.set_can_focus(false);
-        if i == s.active_tab {
-            btn.style_context().add_class("active");
-        }
-        calc_ui.tab_bar.pack_start(&btn, false, false, 0);
-        calc_ui.tab_bar.reorder_child(&btn, i as i32);
-        btn.show();
-
-        {
-            let state_c = state.clone();
-            let calc_ui_tab_bar = calc_ui.tab_bar.clone();
-            let calc_ui_expr = calc_ui.expr_label.clone();
-            let calc_ui_result = calc_ui.result_label.clone();
-            let calc_ui_preview = calc_ui.preview_label.clone();
-            let calc_ui_angle = calc_ui.angle_btn.clone();
-            let idx = i;
-            btn.connect_clicked(move |_| {
-                let effects = {
-                    let mut st = state_c.borrow_mut();
-                    update::update(&mut st, Message::SwitchTab(idx))
-                };
-                for eff in effects {
-                    match eff {
-                        SideEffect::UpdateDisplay => {
-                            let st = state_c.borrow();
-                            let engine = st.engine();
-                            let main_text = engine.main_display_text();
-                            let ctx = calc_ui_result.style_context();
-                            ctx.remove_class("result-medium");
-                            ctx.remove_class("result-small");
-                            if main_text.len() > 12 { ctx.add_class("result-small"); }
-                            else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-                            calc_ui_result.set_text(&main_text);
-                            if engine.show_secondary() {
-                                calc_ui_expr.set_text(&engine.secondary_display_text());
-                                calc_ui_expr.set_opacity(1.0);
-                            } else {
-                                calc_ui_expr.set_text(" ");
-                                calc_ui_expr.set_opacity(0.0);
-                            }
-                            if let Some(preview_text) = engine.auto_eval() {
-                                calc_ui_preview.set_text(&format!("\u{2248} {}", preview_text));
-                                calc_ui_preview.set_opacity(1.0);
-                            } else {
-                                calc_ui_preview.set_text(" ");
-                                calc_ui_preview.set_opacity(0.0);
-                            }
-                            if let Some(ref abtn) = calc_ui_angle {
-                                abtn.set_label(match engine.angle_mode() {
-                                    AngleMode::Degrees => "Deg",
-                                    AngleMode::Radians => "Rad",
-                                });
-                            }
-                        }
-                        SideEffect::UpdateTabs => {
-                            let st = state_c.borrow();
-                            for child in calc_ui_tab_bar.children() {
-                                if child.style_context().has_class("tab-button") {
-                                    child.style_context().remove_class("active");
-                                }
-                            }
-                            let tab_buttons: Vec<_> = calc_ui_tab_bar.children().into_iter()
-                                .filter(|c| c.style_context().has_class("tab-button"))
-                                .collect();
-                            if let Some(active_btn) = tab_buttons.get(st.active_tab) {
-                                active_btn.style_context().add_class("active");
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            });
-        }
-
-        {
-            let state_c = state.clone();
-            let idx = i;
-            btn.connect_button_press_event(move |clicked_btn, event| {
-                if event.event_type() != gtk::gdk::EventType::DoubleButtonPress {
-                    return gtk::Inhibit(false);
-                }
-                let current_name = {
-                    let st = state_c.borrow();
-                    st.tabs.get(idx).map(|t| t.name.clone()).unwrap_or_default()
-                };
-
-                let popover = gtk::Popover::new(Some(clicked_btn));
-                let entry = gtk::Entry::new();
-                entry.set_text(&current_name);
-                entry.set_margin_top(4);
-                entry.set_margin_bottom(4);
-                entry.set_margin_start(4);
-                entry.set_margin_end(4);
-                popover.add(&entry);
-                entry.show();
-                popover.popup();
-                entry.grab_focus();
-
-                let state_inner = state_c.clone();
-                let btn_inner = clicked_btn.clone();
-                let popover_inner = popover.clone();
-                entry.connect_activate(move |e| {
-                    let new_name = e.text().to_string();
-                    if !new_name.is_empty() {
-                        let mut st = state_inner.borrow_mut();
-                        update::update(&mut st, Message::RenameTab(idx, new_name.clone()));
-                        btn_inner.set_label(&new_name);
-                    }
-                    popover_inner.popdown();
-                });
-
-                gtk::Inhibit(true)
-            });
-        }
+    let engine = s.engine();
+    let main_text = engine.main_display_text();
+    let ctx = result_l.style_context();
+    ctx.remove_class("result-medium");
+    ctx.remove_class("result-small");
+    if main_text.len() > 12 {
+        ctx.add_class("result-small");
+    } else if main_text.len() > 7 {
+        ctx.add_class("result-medium");
+    }
+    result_l.set_text(&main_text);
+    if engine.show_secondary() {
+        expr.set_text(&engine.secondary_display_text());
+        expr.set_opacity(1.0);
+    } else {
+        expr.set_text(" ");
+        expr.set_opacity(0.0);
+    }
+    if let Some(preview_text) = engine.auto_eval() {
+        preview.set_text(&format!("\u{2248} {}", preview_text));
+        preview.set_opacity(1.0);
+    } else {
+        preview.set_text(" ");
+        preview.set_opacity(0.0);
+    }
+    if let Some(ref abtn) = angle_btn {
+        abtn.set_label(match engine.angle_mode() {
+            AngleMode::Degrees => "Deg",
+            AngleMode::Radians => "Rad",
+        });
     }
 }
+
+// ── Tab bar helpers ──────────────────────────────────────────────────────────
+
+fn rebuild_tab_bar(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
+    rebuild_tab_buttons(
+        state,
+        &calc_ui.tab_bar,
+        &calc_ui.expr_label,
+        &calc_ui.result_label,
+        &calc_ui.preview_label,
+        &calc_ui.angle_btn,
+    );
+}
+
+fn rebuild_tab_buttons(
+    state: &Rc<RefCell<AppState>>,
+    tab_bar: &gtk::Box,
+    expr: &gtk::Label,
+    result_l: &gtk::Label,
+    preview: &gtk::Label,
+    angle_btn: &Option<gtk::Button>,
+) {
+    for child in tab_bar.children() {
+        if child.style_context().has_class("tab-button") {
+            tab_bar.remove(&child);
+        }
+    }
+    let (names, active): (Vec<String>, usize) = {
+        let s = state.borrow();
+        (s.tabs.iter().map(|t| t.name.clone()).collect(), s.active_tab)
+    };
+    for (i, name) in names.iter().enumerate() {
+        let btn = gtk::Button::with_label(name);
+        btn.style_context().add_class("tab-button");
+        if i == active {
+            btn.style_context().add_class("active");
+        }
+        btn.set_can_focus(false);
+        tab_bar.pack_start(&btn, false, false, 0);
+        tab_bar.reorder_child(&btn, i as i32);
+        btn.show();
+        wire_tab_button(&btn, i, state, tab_bar, expr, result_l, preview, angle_btn);
+    }
+}
+
+fn wire_tab_button(
+    btn: &gtk::Button,
+    idx: usize,
+    state: &Rc<RefCell<AppState>>,
+    tab_bar: &gtk::Box,
+    expr: &gtk::Label,
+    result_l: &gtk::Label,
+    preview: &gtk::Label,
+    angle_btn: &Option<gtk::Button>,
+) {
+    // Left-click: switch to tab
+    {
+        let state_c = state.clone();
+        let tab_bar_c = tab_bar.clone();
+        let expr_c = expr.clone();
+        let result_c = result_l.clone();
+        let preview_c = preview.clone();
+        let angle_c = angle_btn.clone();
+        btn.connect_clicked(move |_| {
+            let effects = {
+                let mut s = state_c.borrow_mut();
+                update::update(&mut s, Message::SwitchTab(idx))
+            };
+            for eff in effects {
+                match eff {
+                    SideEffect::UpdateDisplay => {
+                        apply_update_display(&state_c, &expr_c, &result_c, &preview_c, &angle_c);
+                    }
+                    SideEffect::UpdateTabs => {
+                        let st = state_c.borrow();
+                        for child in tab_bar_c.children() {
+                            if child.style_context().has_class("tab-button") {
+                                child.style_context().remove_class("active");
+                            }
+                        }
+                        let buttons: Vec<_> = tab_bar_c
+                            .children()
+                            .into_iter()
+                            .filter(|c| c.style_context().has_class("tab-button"))
+                            .collect();
+                        if let Some(active_btn) = buttons.get(st.active_tab) {
+                            active_btn.style_context().add_class("active");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    // Button-press: double-click rename, right-click context menu
+    {
+        let state_b = state.clone();
+        let tab_bar_b = tab_bar.clone();
+        let expr_b = expr.clone();
+        let result_b = result_l.clone();
+        let preview_b = preview.clone();
+        let angle_b = angle_btn.clone();
+        btn.connect_button_press_event(move |clicked_btn, event| {
+            match (event.button(), event.event_type()) {
+                (1, gtk::gdk::EventType::DoubleButtonPress) => {
+                    show_rename_popover(clicked_btn, idx, &state_b);
+                    gtk::Inhibit(true)
+                }
+                (3, gtk::gdk::EventType::ButtonPress) => {
+                    let can_delete = state_b.borrow().tabs.len() > 1;
+                    let menu = gtk::Menu::new();
+
+                    let rename_item = gtk::MenuItem::with_label("Rename Tab");
+                    {
+                        let state_r = state_b.clone();
+                        let btn_r = clicked_btn.clone();
+                        rename_item.connect_activate(move |_| {
+                            show_rename_popover(&btn_r, idx, &state_r);
+                        });
+                    }
+
+                    let delete_item = gtk::MenuItem::with_label("Delete Tab");
+                    delete_item.set_sensitive(can_delete);
+                    {
+                        let state_d = state_b.clone();
+                        let tab_bar_d = tab_bar_b.clone();
+                        let expr_d = expr_b.clone();
+                        let result_d = result_b.clone();
+                        let preview_d = preview_b.clone();
+                        let angle_d = angle_b.clone();
+                        delete_item.connect_activate(move |_| {
+                            {
+                                let mut s = state_d.borrow_mut();
+                                update::update(&mut s, Message::CloseTabAt(idx));
+                            }
+                            rebuild_tab_buttons(
+                                &state_d, &tab_bar_d, &expr_d, &result_d, &preview_d, &angle_d,
+                            );
+                            apply_update_display(
+                                &state_d, &expr_d, &result_d, &preview_d, &angle_d,
+                            );
+                        });
+                    }
+
+                    menu.append(&rename_item);
+                    menu.append(&delete_item);
+                    menu.show_all();
+                    menu.popup_at_pointer(None::<&gtk::gdk::Event>);
+                    gtk::Inhibit(true)
+                }
+                _ => gtk::Inhibit(false),
+            }
+        });
+    }
+}
+
+fn show_rename_popover(btn: &gtk::Button, idx: usize, state: &Rc<RefCell<AppState>>) {
+    let current_name = {
+        let st = state.borrow();
+        st.tabs.get(idx).map(|t| t.name.clone()).unwrap_or_default()
+    };
+    let popover = gtk::Popover::new(Some(btn));
+    let entry = gtk::Entry::new();
+    entry.set_text(&current_name);
+    entry.set_margin_top(4);
+    entry.set_margin_bottom(4);
+    entry.set_margin_start(4);
+    entry.set_margin_end(4);
+    popover.add(&entry);
+    entry.show();
+    popover.popup();
+    entry.grab_focus();
+
+    let state_c = state.clone();
+    let btn_c = btn.clone();
+    let popover_c = popover.clone();
+    entry.connect_activate(move |e| {
+        let new_name = e.text().to_string();
+        if !new_name.is_empty() {
+            let mut st = state_c.borrow_mut();
+            update::update(&mut st, Message::RenameTab(idx, new_name.clone()));
+            btn_c.set_label(&new_name);
+        }
+        popover_c.popdown();
+    });
+}
+
+// ── Signal wiring ────────────────────────────────────────────────────────────
 
 fn wire_action_buttons(
     state: &Rc<RefCell<AppState>>,
@@ -322,35 +408,13 @@ fn wire_action_buttons(
             for eff in effects {
                 match eff {
                     SideEffect::UpdateDisplay => {
-                        let s = state_c.borrow();
-                        let engine = s.engine();
-                        let main_text = engine.main_display_text();
-                        let ctx = calc_ui_result.style_context();
-                        ctx.remove_class("result-medium");
-                        ctx.remove_class("result-small");
-                        if main_text.len() > 12 { ctx.add_class("result-small"); }
-                        else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-                        calc_ui_result.set_text(&main_text);
-                        if engine.show_secondary() {
-                            calc_ui_expr.set_text(&engine.secondary_display_text());
-                            calc_ui_expr.set_opacity(1.0);
-                        } else {
-                            calc_ui_expr.set_text(" ");
-                            calc_ui_expr.set_opacity(0.0);
-                        }
-                        if let Some(preview_text) = engine.auto_eval() {
-                            calc_ui_preview.set_text(&format!("\u{2248} {}", preview_text));
-                            calc_ui_preview.set_opacity(1.0);
-                        } else {
-                            calc_ui_preview.set_text(" ");
-                            calc_ui_preview.set_opacity(0.0);
-                        }
-                        if let Some(ref abtn) = calc_ui_angle {
-                            abtn.set_label(match engine.angle_mode() {
-                                AngleMode::Degrees => "Deg",
-                                AngleMode::Radians => "Rad",
-                            });
-                        }
+                        apply_update_display(
+                            &state_c,
+                            &calc_ui_expr,
+                            &calc_ui_result,
+                            &calc_ui_preview,
+                            &calc_ui_angle,
+                        );
                     }
                     SideEffect::ToggleScientific(mode) => {
                         if mode {
@@ -368,7 +432,8 @@ fn wire_action_buttons(
                         if s.scientific_mode {
                             calc_ui_window.resize(580, s.config.window.default_height);
                         } else {
-                            calc_ui_window.resize(s.config.window.default_width, s.config.window.default_height);
+                            calc_ui_window
+                                .resize(s.config.window.default_width, s.config.window.default_height);
                         }
                     }
                     _ => {}
@@ -430,7 +495,12 @@ fn wire_panel_buttons(
                     update::update(&mut s, Message::ClearHistory);
                 }
                 let s = state_c.borrow();
-                refresh_history(&s.engine().history, &history_list, &s.history_search, s.config.history.show_timestamps);
+                refresh_history(
+                    &s.engine().history,
+                    &history_list,
+                    &s.history_search,
+                    s.config.history.show_timestamps,
+                );
             }
         });
     }
@@ -493,7 +563,12 @@ fn wire_panel_buttons(
                 update::update(&mut s, Message::SearchHistory(query));
             }
             let s = state_c.borrow();
-            refresh_history(&s.engine().history, &history_list, &s.history_search, s.config.history.show_timestamps);
+            refresh_history(
+                &s.engine().history,
+                &history_list,
+                &s.history_search,
+                s.config.history.show_timestamps,
+            );
         });
     }
 }
@@ -522,13 +597,26 @@ fn wire_menu_buttons(
                 for eff in effects {
                     match eff {
                         SideEffect::ToggleScientific(mode) => {
-                            if mode { sci_grid.show_all(); sci_btn.style_context().add_class("active"); basic_btn.style_context().remove_class("active"); }
-                            else { sci_grid.hide(); basic_btn.style_context().add_class("active"); sci_btn.style_context().remove_class("active"); }
+                            if mode {
+                                sci_grid.show_all();
+                                sci_btn.style_context().add_class("active");
+                                basic_btn.style_context().remove_class("active");
+                            } else {
+                                sci_grid.hide();
+                                basic_btn.style_context().add_class("active");
+                                sci_btn.style_context().remove_class("active");
+                            }
                         }
                         SideEffect::ResizeWindow => {
                             let s = state_c.borrow();
-                            if s.scientific_mode { window.resize(580, s.config.window.default_height); }
-                            else { window.resize(s.config.window.default_width, s.config.window.default_height); }
+                            if s.scientific_mode {
+                                window.resize(580, s.config.window.default_height);
+                            } else {
+                                window.resize(
+                                    s.config.window.default_width,
+                                    s.config.window.default_height,
+                                );
+                            }
                         }
                         _ => {}
                     }
@@ -555,13 +643,26 @@ fn wire_menu_buttons(
                 for eff in effects {
                     match eff {
                         SideEffect::ToggleScientific(mode) => {
-                            if mode { sci_grid.show_all(); sci_btn.style_context().add_class("active"); basic_btn.style_context().remove_class("active"); }
-                            else { sci_grid.hide(); basic_btn.style_context().add_class("active"); sci_btn.style_context().remove_class("active"); }
+                            if mode {
+                                sci_grid.show_all();
+                                sci_btn.style_context().add_class("active");
+                                basic_btn.style_context().remove_class("active");
+                            } else {
+                                sci_grid.hide();
+                                basic_btn.style_context().add_class("active");
+                                sci_btn.style_context().remove_class("active");
+                            }
                         }
                         SideEffect::ResizeWindow => {
                             let s = state_c.borrow();
-                            if s.scientific_mode { window.resize(580, s.config.window.default_height); }
-                            else { window.resize(s.config.window.default_width, s.config.window.default_height); }
+                            if s.scientific_mode {
+                                window.resize(580, s.config.window.default_height);
+                            } else {
+                                window.resize(
+                                    s.config.window.default_width,
+                                    s.config.window.default_height,
+                                );
+                            }
                         }
                         _ => {}
                     }
@@ -646,7 +747,12 @@ fn wire_menu_buttons(
         btn.connect_clicked(move |_| {
             popover.popdown();
             let s = state_c.borrow();
-            theme_mgr_c.borrow_mut().set_theme(theme_val, &s.config.theme, &s.config.layout, &s.config.feedback);
+            theme_mgr_c.borrow_mut().set_theme(
+                theme_val,
+                &s.config.theme,
+                &s.config.layout,
+                &s.config.feedback,
+            );
             for (b, i) in &all_btns {
                 if *i == current_idx {
                     b.style_context().add_class("menu-item-active");
@@ -800,7 +906,11 @@ fn wire_tools(calc_ui: &CalculatorUI) {
             let price: f64 = price_entry.text().parse().unwrap_or(0.0);
             let pct: f64 = pct_entry.text().parse().unwrap_or(0.0);
             let savings = price * pct / 100.0;
-            result_lbl.set_text(&format!("Save: {:.2}  |  Final: {:.2}", savings, price - savings));
+            result_lbl.set_text(&format!(
+                "Save: {:.2}  |  Final: {:.2}",
+                savings,
+                price - savings
+            ));
         };
 
         let cd = calc_disc.clone();
@@ -855,7 +965,10 @@ fn wire_notes(calc_ui: &CalculatorUI, state: &Rc<RefCell<AppState>>) {
                 match domain::eval::parse_expression(line, &plugins) {
                     Ok(tokens) if !tokens.is_empty() => {
                         match domain::eval::evaluate(&tokens, AngleMode::Degrees, true) {
-                            Ok(val) => results.push(format!("= {}", domain::types::format_number_default(val))),
+                            Ok(val) => results.push(format!(
+                                "= {}",
+                                domain::types::format_number_default(val)
+                            )),
                             Err(e) => results.push(format!("  {}", e)),
                         }
                     }
@@ -897,7 +1010,59 @@ fn wire_keyboard(
     let angle_btn = calc_ui.angle_btn.clone();
     let tab_bar = calc_ui.tab_bar.clone();
 
+    let pending_g = Rc::new(RefCell::new(false));
+
     calc_ui.window.connect_key_press_event(move |_, event| {
+        let keyval = event.keyval();
+        let mods = event.state();
+        let ctrl = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        let alt = mods.contains(gtk::gdk::ModifierType::MOD1_MASK);
+        let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+
+        // Handle pending g+t / g+T chord
+        if *pending_g.borrow() {
+            *pending_g.borrow_mut() = false;
+            if !ctrl && !alt {
+                let chord_msg = match keyval.to_unicode() {
+                    Some('t') => Some(Message::NextTab),
+                    Some('T') => Some(Message::PrevTab),
+                    _ => None,
+                };
+                if let Some(msg) = chord_msg {
+                    let effects = {
+                        let mut s = state_c.borrow_mut();
+                        update::update(&mut s, msg)
+                    };
+                    for eff in &effects {
+                        match eff {
+                            SideEffect::UpdateDisplay => {
+                                apply_update_display(
+                                    &state_c, &expr, &result_l, &preview, &angle_btn,
+                                );
+                            }
+                            SideEffect::UpdateTabs => {
+                                rebuild_tab_buttons(
+                                    &state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    return gtk::Inhibit(true);
+                }
+            }
+            // chord not completed — fall through to normal processing
+        }
+
+        // 'g' alone (no modifiers, not in mode panel) initiates chord
+        if !ctrl && !alt && !shift && keyval.to_unicode() == Some('g') {
+            let mode_open = state_c.borrow().mode_panel_visible;
+            if !mode_open {
+                *pending_g.borrow_mut() = true;
+                return gtk::Inhibit(true);
+            }
+        }
+
         let msg = ui::keyboard::map_key(event);
         if matches!(msg, Message::Noop) {
             return gtk::Inhibit(false);
@@ -911,154 +1076,12 @@ fn wire_keyboard(
         for eff in effects {
             match eff {
                 SideEffect::UpdateDisplay => {
-                    let s = state_c.borrow();
-                    let engine = s.engine();
-                    let main_text = engine.main_display_text();
-                    let ctx = result_l.style_context();
-                    ctx.remove_class("result-medium");
-                    ctx.remove_class("result-small");
-                    if main_text.len() > 12 { ctx.add_class("result-small"); }
-                    else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-                    result_l.set_text(&main_text);
-                    if engine.show_secondary() {
-                        expr.set_text(&engine.secondary_display_text());
-                        expr.set_opacity(1.0);
-                    } else {
-                        expr.set_text(" ");
-                        expr.set_opacity(0.0);
-                    }
-                    if let Some(preview_text) = engine.auto_eval() {
-                        preview.set_text(&format!("\u{2248} {}", preview_text));
-                        preview.set_opacity(1.0);
-                    } else {
-                        preview.set_text(" ");
-                        preview.set_opacity(0.0);
-                    }
-                    if let Some(ref abtn) = angle_btn {
-                        abtn.set_label(match engine.angle_mode() {
-                            AngleMode::Degrees => "Deg",
-                            AngleMode::Radians => "Rad",
-                        });
-                    }
+                    apply_update_display(&state_c, &expr, &result_l, &preview, &angle_btn);
                 }
                 SideEffect::UpdateTabs => {
-                    for child in tab_bar.children() {
-                        if child.style_context().has_class("tab-button") {
-                            tab_bar.remove(&child);
-                        }
-                    }
-                    let s = state_c.borrow();
-                    for (i, tab) in s.tabs.iter().enumerate() {
-                        let btn = gtk::Button::with_label(&tab.name);
-                        btn.style_context().add_class("tab-button");
-                        btn.set_can_focus(false);
-                        if i == s.active_tab {
-                            btn.style_context().add_class("active");
-                        }
-                        tab_bar.pack_start(&btn, false, false, 0);
-                        tab_bar.reorder_child(&btn, i as i32);
-                        btn.show();
-
-                        let state_inner = state_c.clone();
-                        let expr_inner = expr.clone();
-                        let result_inner = result_l.clone();
-                        let preview_inner = preview.clone();
-                        let angle_inner = angle_btn.clone();
-                        let tab_bar_inner = tab_bar.clone();
-                        let idx = i;
-                        btn.connect_clicked(move |_| {
-                            let effects = {
-                                let mut st = state_inner.borrow_mut();
-                                update::update(&mut st, Message::SwitchTab(idx))
-                            };
-                            for eff in effects {
-                                match eff {
-                                    SideEffect::UpdateDisplay => {
-                                        let st = state_inner.borrow();
-                                        let engine = st.engine();
-                                        let main_text = engine.main_display_text();
-                                        let ctx = result_inner.style_context();
-                                        ctx.remove_class("result-medium");
-                                        ctx.remove_class("result-small");
-                                        if main_text.len() > 12 { ctx.add_class("result-small"); }
-                                        else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-                                        result_inner.set_text(&main_text);
-                                        if engine.show_secondary() {
-                                            expr_inner.set_text(&engine.secondary_display_text());
-                                            expr_inner.set_opacity(1.0);
-                                        } else {
-                                            expr_inner.set_text(" ");
-                                            expr_inner.set_opacity(0.0);
-                                        }
-                                        if let Some(preview_text) = engine.auto_eval() {
-                                            preview_inner.set_text(&format!("\u{2248} {}", preview_text));
-                                            preview_inner.set_opacity(1.0);
-                                        } else {
-                                            preview_inner.set_text(" ");
-                                            preview_inner.set_opacity(0.0);
-                                        }
-                                        if let Some(ref abtn) = angle_inner {
-                                            abtn.set_label(match engine.angle_mode() {
-                                                AngleMode::Degrees => "Deg",
-                                                AngleMode::Radians => "Rad",
-                                            });
-                                        }
-                                    }
-                                    SideEffect::UpdateTabs => {
-                                        let st = state_inner.borrow();
-                                        for child in tab_bar_inner.children() {
-                                            if child.style_context().has_class("tab-button") {
-                                                child.style_context().remove_class("active");
-                                            }
-                                        }
-                                        let tab_buttons: Vec<_> = tab_bar_inner.children().into_iter()
-                                            .filter(|c| c.style_context().has_class("tab-button"))
-                                            .collect();
-                                        if let Some(active_btn) = tab_buttons.get(st.active_tab) {
-                                            active_btn.style_context().add_class("active");
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        });
-
-                        let state_rename = state_c.clone();
-                        let idx_rename = i;
-                        btn.connect_button_press_event(move |clicked_btn, event| {
-                            if event.event_type() != gtk::gdk::EventType::DoubleButtonPress {
-                                return gtk::Inhibit(false);
-                            }
-                            let current_name = {
-                                let st = state_rename.borrow();
-                                st.tabs.get(idx_rename).map(|t| t.name.clone()).unwrap_or_default()
-                            };
-                            let popover = gtk::Popover::new(Some(clicked_btn));
-                            let entry = gtk::Entry::new();
-                            entry.set_text(&current_name);
-                            entry.set_margin_top(4);
-                            entry.set_margin_bottom(4);
-                            entry.set_margin_start(4);
-                            entry.set_margin_end(4);
-                            popover.add(&entry);
-                            entry.show();
-                            popover.popup();
-                            entry.grab_focus();
-                            let state_entry = state_rename.clone();
-                            let btn_entry = clicked_btn.clone();
-                            let popover_entry = popover.clone();
-                            entry.connect_activate(move |e| {
-                                let new_name = e.text().to_string();
-                                if !new_name.is_empty() {
-                                    let mut st = state_entry.borrow_mut();
-                                    update::update(&mut st, Message::RenameTab(idx_rename, new_name.clone()));
-                                    btn_entry.set_label(&new_name);
-                                }
-                                popover_entry.popdown();
-                            });
-                            gtk::Inhibit(true)
-                        });
-                    }
+                    rebuild_tab_buttons(
+                        &state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn,
+                    );
                 }
                 SideEffect::ToggleScientific(mode) => {
                     if mode {
@@ -1076,12 +1099,19 @@ fn wire_keyboard(
                     if s.scientific_mode {
                         window.resize(580, s.config.window.default_height);
                     } else {
-                        window.resize(s.config.window.default_width, s.config.window.default_height);
+                        window.resize(
+                            s.config.window.default_width,
+                            s.config.window.default_height,
+                        );
                     }
                 }
                 SideEffect::ToggleTheme => {
                     let s = state_c.borrow();
-                    theme_mgr_c.borrow_mut().toggle(&s.config.theme, &s.config.layout, &s.config.feedback);
+                    theme_mgr_c.borrow_mut().toggle(
+                        &s.config.theme,
+                        &s.config.layout,
+                        &s.config.feedback,
+                    );
                 }
                 SideEffect::TogglePanel => {
                     let s = state_c.borrow();
@@ -1122,11 +1152,20 @@ fn wire_keyboard(
                 }
                 SideEffect::RefreshHistory => {
                     let s = state_c.borrow();
-                    refresh_history(&s.engine().history, &history_list, &s.history_search, s.config.history.show_timestamps);
+                    refresh_history(
+                        &s.engine().history,
+                        &history_list,
+                        &s.history_search,
+                        s.config.history.show_timestamps,
+                    );
                 }
                 SideEffect::RefreshMemory => {
                     let s = state_c.borrow();
-                    refresh_memory(&s.engine().memory_slots, s.engine().has_memory(), &memory_list);
+                    refresh_memory(
+                        &s.engine().memory_slots,
+                        s.engine().has_memory(),
+                        &memory_list,
+                    );
                 }
                 SideEffect::RefreshPinned => {
                     let s = state_c.borrow();
@@ -1187,162 +1226,25 @@ fn wire_window_close(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
         gtk::Inhibit(false)
     });
 
-    let state_c = state.clone();
-    calc_ui.tab_add_btn.connect_clicked({
-        let state_c = state_c.clone();
+    {
+        let state_c = state.clone();
         let tab_bar = calc_ui.tab_bar.clone();
         let expr = calc_ui.expr_label.clone();
         let result_l = calc_ui.result_label.clone();
         let preview = calc_ui.preview_label.clone();
         let angle_btn = calc_ui.angle_btn.clone();
-        move |_| {
+        calc_ui.tab_add_btn.connect_clicked(move |_| {
             {
                 let mut s = state_c.borrow_mut();
                 update::update(&mut s, Message::NewTab);
             }
-            for child in tab_bar.children() {
-                if child.style_context().has_class("tab-button") {
-                    tab_bar.remove(&child);
-                }
-            }
-            let s = state_c.borrow();
-            for (i, tab) in s.tabs.iter().enumerate() {
-                let btn = gtk::Button::with_label(&tab.name);
-                btn.style_context().add_class("tab-button");
-                btn.set_can_focus(false);
-                if i == s.active_tab {
-                    btn.style_context().add_class("active");
-                }
-                tab_bar.pack_start(&btn, false, false, 0);
-                tab_bar.reorder_child(&btn, i as i32);
-                btn.show();
-
-                let state_inner = state_c.clone();
-                let expr_inner = expr.clone();
-                let result_inner = result_l.clone();
-                let preview_inner = preview.clone();
-                let angle_inner = angle_btn.clone();
-                let tab_bar_inner = tab_bar.clone();
-                let idx = i;
-                btn.connect_clicked(move |_| {
-                    let effects = {
-                        let mut st = state_inner.borrow_mut();
-                        update::update(&mut st, Message::SwitchTab(idx))
-                    };
-                    for eff in effects {
-                        match eff {
-                            SideEffect::UpdateDisplay => {
-                                let st = state_inner.borrow();
-                                let engine = st.engine();
-                                let main_text = engine.main_display_text();
-                                let ctx = result_inner.style_context();
-                                ctx.remove_class("result-medium");
-                                ctx.remove_class("result-small");
-                                if main_text.len() > 12 { ctx.add_class("result-small"); }
-                                else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-                                result_inner.set_text(&main_text);
-                                if engine.show_secondary() {
-                                    expr_inner.set_text(&engine.secondary_display_text());
-                                    expr_inner.set_opacity(1.0);
-                                } else {
-                                    expr_inner.set_text(" ");
-                                    expr_inner.set_opacity(0.0);
-                                }
-                                if let Some(preview_text) = engine.auto_eval() {
-                                    preview_inner.set_text(&format!("\u{2248} {}", preview_text));
-                                    preview_inner.set_opacity(1.0);
-                                } else {
-                                    preview_inner.set_text(" ");
-                                    preview_inner.set_opacity(0.0);
-                                }
-                                if let Some(ref abtn) = angle_inner {
-                                    abtn.set_label(match engine.angle_mode() {
-                                        AngleMode::Degrees => "Deg",
-                                        AngleMode::Radians => "Rad",
-                                    });
-                                }
-                            }
-                            SideEffect::UpdateTabs => {
-                                let st = state_inner.borrow();
-                                for child in tab_bar_inner.children() {
-                                    if child.style_context().has_class("tab-button") {
-                                        child.style_context().remove_class("active");
-                                    }
-                                }
-                                let tab_buttons: Vec<_> = tab_bar_inner.children().into_iter()
-                                    .filter(|c| c.style_context().has_class("tab-button"))
-                                    .collect();
-                                if let Some(active_btn) = tab_buttons.get(st.active_tab) {
-                                    active_btn.style_context().add_class("active");
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                });
-
-                let state_rename = state_c.clone();
-                let idx_rename = i;
-                btn.connect_button_press_event(move |clicked_btn, event| {
-                    if event.event_type() != gtk::gdk::EventType::DoubleButtonPress {
-                        return gtk::Inhibit(false);
-                    }
-                    let current_name = {
-                        let st = state_rename.borrow();
-                        st.tabs.get(idx_rename).map(|t| t.name.clone()).unwrap_or_default()
-                    };
-                    let popover = gtk::Popover::new(Some(clicked_btn));
-                    let entry = gtk::Entry::new();
-                    entry.set_text(&current_name);
-                    entry.set_margin_top(4);
-                    entry.set_margin_bottom(4);
-                    entry.set_margin_start(4);
-                    entry.set_margin_end(4);
-                    popover.add(&entry);
-                    entry.show();
-                    popover.popup();
-                    entry.grab_focus();
-                    let state_entry = state_rename.clone();
-                    let btn_entry = clicked_btn.clone();
-                    let popover_entry = popover.clone();
-                    entry.connect_activate(move |e| {
-                        let new_name = e.text().to_string();
-                        if !new_name.is_empty() {
-                            let mut st = state_entry.borrow_mut();
-                            update::update(&mut st, Message::RenameTab(idx_rename, new_name.clone()));
-                            btn_entry.set_label(&new_name);
-                        }
-                        popover_entry.popdown();
-                    });
-                    gtk::Inhibit(true)
-                });
-            }
-
-            let engine = s.engine();
-            let main_text = engine.main_display_text();
-            let ctx = result_l.style_context();
-            ctx.remove_class("result-medium");
-            ctx.remove_class("result-small");
-            if main_text.len() > 12 { ctx.add_class("result-small"); }
-            else if main_text.len() > 7 { ctx.add_class("result-medium"); }
-            result_l.set_text(&main_text);
-            if engine.show_secondary() {
-                expr.set_text(&engine.secondary_display_text());
-                expr.set_opacity(1.0);
-            } else {
-                expr.set_text(" ");
-                expr.set_opacity(0.0);
-            }
-            if let Some(preview_text) = engine.auto_eval() {
-                preview.set_text(&format!("\u{2248} {}", preview_text));
-                preview.set_opacity(1.0);
-            } else {
-                preview.set_text(" ");
-                preview.set_opacity(0.0);
-            }
-        }
-    });
+            rebuild_tab_buttons(&state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn);
+            apply_update_display(&state_c, &expr, &result_l, &preview, &angle_btn);
+        });
+    }
 }
+
+// ── Help dialog ──────────────────────────────────────────────────────────────
 
 fn show_help_dialog(window: &gtk::Window) {
     let dialog = gtk::Dialog::with_buttons(
@@ -1351,23 +1253,136 @@ fn show_help_dialog(window: &gtk::Window) {
         gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
         &[("Close", gtk::ResponseType::Close)],
     );
-    dialog.set_default_size(380, 440);
+    dialog.set_default_size(480, 560);
+
     let content = dialog.content_area();
-    let scroll = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
-    let label = gtk::Label::new(Some(HELP_TEXT));
-    label.set_xalign(0.0);
-    label.set_yalign(0.0);
-    label.set_margin_top(12);
-    label.set_margin_bottom(12);
-    label.set_margin_start(16);
-    label.set_margin_end(16);
-    label.set_selectable(true);
-    scroll.add(&label);
+    let scroll =
+        gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    vbox.set_margin_top(12);
+    vbox.set_margin_bottom(16);
+    vbox.set_margin_start(20);
+    vbox.set_margin_end(20);
+
+    let sections: &[(&str, &[(&str, &str)])] = &[
+        (
+            "CALCULATOR",
+            &[
+                ("0 – 9", "Digits"),
+                ("+ − × ÷", "Arithmetic operators"),
+                ("^", "Power / exponent"),
+                ("( )", "Parentheses"),
+                (".", "Decimal point"),
+                ("= / Enter", "Calculate result"),
+                ("%", "Percent"),
+                ("!", "Factorial"),
+                ("n", "Negate (+/−)"),
+                ("Backspace", "Delete last character"),
+                ("Escape", "Clear / close panel"),
+                ("Space", "Activate focused button"),
+                ("u / Ctrl+Z", "Undo"),
+            ],
+        ),
+        (
+            "DISPLAY & APP",
+            &[
+                ("s", "Toggle scientific mode"),
+                ("t", "Cycle theme"),
+                ("Ctrl+Q", "Quit"),
+                (";", "Open menu"),
+                ("? / F1", "Show this help"),
+            ],
+        ),
+        (
+            "NAVIGATION",
+            &[
+                ("h / j / k / l", "Navigate buttons (vim-style)"),
+                ("Arrow keys", "Navigate buttons"),
+                ("Space", "Activate focused button"),
+            ],
+        ),
+        (
+            "TABS",
+            &[
+                ("Ctrl+T", "New tab"),
+                ("Ctrl+W", "Close current tab"),
+                ("Tab", "Next tab"),
+                ("Shift+Tab", "Previous tab"),
+                ("g + t", "Next tab (chord)"),
+                ("g + T", "Previous tab (chord)"),
+                ("Click", "Switch to tab"),
+                ("Double-click", "Rename tab"),
+                ("Right-click", "Delete / rename tab"),
+            ],
+        ),
+        (
+            "PANELS",
+            &[
+                ("Ctrl+H", "Toggle history panel"),
+                ("Ctrl+M", "Toggle memory panel"),
+                ("Ctrl+P", "Toggle pinned panel"),
+                ("Ctrl+S", "Pin current result"),
+                ("S", "Store value to memory"),
+                ("Ctrl+Shift+E", "Export history"),
+            ],
+        ),
+        (
+            "MODES",
+            &[
+                ("Ctrl+E", "Unit converter"),
+                ("Ctrl+R", "Quick tools (tip / discount / tax)"),
+                ("Ctrl+N", "Math notes"),
+            ],
+        ),
+    ];
+
+    for (i, (title, entries)) in sections.iter().enumerate() {
+        if i > 0 {
+            let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+            sep.set_margin_top(8);
+            sep.set_margin_bottom(4);
+            vbox.pack_start(&sep, false, false, 0);
+        }
+
+        let header = gtk::Label::new(Some(title));
+        header.style_context().add_class("help-section-header");
+        header.set_xalign(0.0);
+        vbox.pack_start(&header, false, false, 0);
+
+        let grid = gtk::Grid::new();
+        grid.set_row_spacing(3);
+        grid.set_column_spacing(16);
+        grid.set_margin_top(4);
+        grid.set_margin_bottom(4);
+
+        for (row, (key, desc)) in entries.iter().enumerate() {
+            let key_lbl = gtk::Label::new(Some(key));
+            key_lbl.style_context().add_class("help-key-badge");
+            key_lbl.set_xalign(1.0);
+            key_lbl.set_hexpand(false);
+
+            let desc_lbl = gtk::Label::new(Some(desc));
+            desc_lbl.style_context().add_class("help-desc");
+            desc_lbl.set_xalign(0.0);
+            desc_lbl.set_hexpand(true);
+
+            grid.attach(&key_lbl, 0, row as i32, 1, 1);
+            grid.attach(&desc_lbl, 1, row as i32, 1, 1);
+        }
+
+        vbox.pack_start(&grid, false, false, 0);
+    }
+
+    scroll.add(&vbox);
     content.pack_start(&scroll, true, true, 0);
     dialog.show_all();
     dialog.run();
     unsafe { dialog.destroy(); }
 }
+
+// ── Panel refresh helpers ────────────────────────────────────────────────────
 
 fn format_timestamp(ts: u64) -> String {
     let secs = ts % 60;
@@ -1397,7 +1412,11 @@ fn refresh_history(
         .collect();
 
     if filtered.is_empty() {
-        let msg = if query.is_empty() { "No calculations yet" } else { "No matching results" };
+        let msg = if query.is_empty() {
+            "No calculations yet"
+        } else {
+            "No matching results"
+        };
         let empty = gtk::Label::new(Some(msg));
         empty.style_context().add_class("panel-empty");
         list.pack_start(&empty, false, false, 0);
@@ -1501,7 +1520,10 @@ fn refresh_pinned(pinned: &[domain::types::PinnedCalc], list: &gtk::Box) {
             expr.set_xalign(1.0);
             expr.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
-            let val = gtk::Label::new(Some(&format!("= {}", domain::types::format_number_default(pin.result))));
+            let val = gtk::Label::new(Some(&format!(
+                "= {}",
+                domain::types::format_number_default(pin.result)
+            )));
             val.style_context().add_class("panel-item-result");
             val.set_xalign(1.0);
 

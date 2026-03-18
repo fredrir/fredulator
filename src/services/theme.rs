@@ -63,6 +63,10 @@ button { font-size: 18px; padding: 10px; min-height: 44px; border-radius: 12px; 
 .mode-header { font-size: 16px; font-weight: bold; padding: 8px 4px; }
 .back-button { font-size: 14px; padding: 4px 12px; min-height: 28px; border-radius: 8px; border: none; }
 .mode-panel-container { min-width: 280px; padding: 0; }
+.tab-buttons-inner { }
+.help-section-header { font-size: 11px; font-weight: bold; padding: 8px 0 2px 0; opacity: 0.6; }
+.help-key-badge { font-size: 11px; font-family: monospace; padding: 1px 8px; border-radius: 3px; border: 1px solid rgba(128,128,128,0.4); }
+.help-desc { font-size: 13px; padding: 2px 0; }
 "#;
 
 const VOID_CSS: &str = r#"

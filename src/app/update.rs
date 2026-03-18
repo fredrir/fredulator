@@ -131,6 +131,18 @@ pub fn update(state: &mut AppState, msg: Message) -> Vec<SideEffect> {
             }
             vec![SideEffect::UpdateTabs, SideEffect::UpdateDisplay]
         }
+        Message::CloseTabAt(idx) => {
+            if state.tabs.len() <= 1 {
+                return vec![SideEffect::Noop];
+            }
+            if idx < state.tabs.len() {
+                state.tabs.remove(idx);
+                if state.active_tab >= state.tabs.len() {
+                    state.active_tab = state.tabs.len() - 1;
+                }
+            }
+            vec![SideEffect::UpdateTabs, SideEffect::UpdateDisplay]
+        }
         Message::SwitchTab(idx) => {
             if idx < state.tabs.len() && idx != state.active_tab {
                 state.active_tab = idx;

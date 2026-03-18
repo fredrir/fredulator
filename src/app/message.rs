@@ -27,6 +27,7 @@ pub enum Message {
 
     NewTab,
     CloseTab,
+    CloseTabAt(usize),
     SwitchTab(usize),
     NextTab,
     PrevTab,
