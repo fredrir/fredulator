@@ -174,28 +174,40 @@ fn apply_update_display(
 
 // ── Tab bar helpers ──────────────────────────────────────────────────────────
 
-fn rebuild_tab_bar(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
-    rebuild_tab_buttons(
-        state,
-        &calc_ui.tab_bar,
-        &calc_ui.expr_label,
-        &calc_ui.result_label,
-        &calc_ui.preview_label,
-        &calc_ui.angle_btn,
-    );
+/// Shared context passed to tab-button wiring helpers.
+#[derive(Clone)]
+struct TabCtx {
+    tab_bar: gtk::Box,
+    expr: gtk::Label,
+    result_l: gtk::Label,
+    preview: gtk::Label,
+    angle_btn: Option<gtk::Button>,
 }
 
-fn rebuild_tab_buttons(
-    state: &Rc<RefCell<AppState>>,
-    tab_bar: &gtk::Box,
-    expr: &gtk::Label,
-    result_l: &gtk::Label,
-    preview: &gtk::Label,
-    angle_btn: &Option<gtk::Button>,
-) {
-    for child in tab_bar.children() {
+impl TabCtx {
+    fn from_ui(calc_ui: &CalculatorUI) -> Self {
+        Self {
+            tab_bar: calc_ui.tab_bar.clone(),
+            expr: calc_ui.expr_label.clone(),
+            result_l: calc_ui.result_label.clone(),
+            preview: calc_ui.preview_label.clone(),
+            angle_btn: calc_ui.angle_btn.clone(),
+        }
+    }
+
+    fn apply_display(&self, state: &Rc<RefCell<AppState>>) {
+        apply_update_display(state, &self.expr, &self.result_l, &self.preview, &self.angle_btn);
+    }
+}
+
+fn rebuild_tab_bar(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
+    rebuild_tab_buttons(state, &TabCtx::from_ui(calc_ui));
+}
+
+fn rebuild_tab_buttons(state: &Rc<RefCell<AppState>>, ctx: &TabCtx) {
+    for child in ctx.tab_bar.children() {
         if child.style_context().has_class("tab-button") {
-            tab_bar.remove(&child);
+            ctx.tab_bar.remove(&child);
         }
     }
     let (names, active): (Vec<String>, usize) = {
@@ -209,10 +221,10 @@ fn rebuild_tab_buttons(
             btn.style_context().add_class("active");
         }
         btn.set_can_focus(false);
-        tab_bar.pack_start(&btn, false, false, 0);
-        tab_bar.reorder_child(&btn, i as i32);
+        ctx.tab_bar.pack_start(&btn, false, false, 0);
+        ctx.tab_bar.reorder_child(&btn, i as i32);
         btn.show();
-        wire_tab_button(&btn, i, state, tab_bar, expr, result_l, preview, angle_btn);
+        wire_tab_button(&btn, i, state, ctx);
     }
 }
 
@@ -220,20 +232,12 @@ fn wire_tab_button(
     btn: &gtk::Button,
     idx: usize,
     state: &Rc<RefCell<AppState>>,
-    tab_bar: &gtk::Box,
-    expr: &gtk::Label,
-    result_l: &gtk::Label,
-    preview: &gtk::Label,
-    angle_btn: &Option<gtk::Button>,
+    ctx: &TabCtx,
 ) {
     // Left-click: switch to tab
     {
         let state_c = state.clone();
-        let tab_bar_c = tab_bar.clone();
-        let expr_c = expr.clone();
-        let result_c = result_l.clone();
-        let preview_c = preview.clone();
-        let angle_c = angle_btn.clone();
+        let ctx_c = ctx.clone();
         btn.connect_clicked(move |_| {
             let effects = {
                 let mut s = state_c.borrow_mut();
@@ -242,16 +246,17 @@ fn wire_tab_button(
             for eff in effects {
                 match eff {
                     SideEffect::UpdateDisplay => {
-                        apply_update_display(&state_c, &expr_c, &result_c, &preview_c, &angle_c);
+                        ctx_c.apply_display(&state_c);
                     }
                     SideEffect::UpdateTabs => {
                         let st = state_c.borrow();
-                        for child in tab_bar_c.children() {
+                        for child in ctx_c.tab_bar.children() {
                             if child.style_context().has_class("tab-button") {
                                 child.style_context().remove_class("active");
                             }
                         }
-                        let buttons: Vec<_> = tab_bar_c
+                        let buttons: Vec<_> = ctx_c
+                            .tab_bar
                             .children()
                             .into_iter()
                             .filter(|c| c.style_context().has_class("tab-button"))
@@ -269,11 +274,7 @@ fn wire_tab_button(
     // Button-press: double-click rename, right-click context menu
     {
         let state_b = state.clone();
-        let tab_bar_b = tab_bar.clone();
-        let expr_b = expr.clone();
-        let result_b = result_l.clone();
-        let preview_b = preview.clone();
-        let angle_b = angle_btn.clone();
+        let ctx_b = ctx.clone();
         btn.connect_button_press_event(move |clicked_btn, event| {
             match (event.button(), event.event_type()) {
                 (1, gtk::gdk::EventType::DoubleButtonPress) => {
@@ -297,22 +298,14 @@ fn wire_tab_button(
                     delete_item.set_sensitive(can_delete);
                     {
                         let state_d = state_b.clone();
-                        let tab_bar_d = tab_bar_b.clone();
-                        let expr_d = expr_b.clone();
-                        let result_d = result_b.clone();
-                        let preview_d = preview_b.clone();
-                        let angle_d = angle_b.clone();
+                        let ctx_d = ctx_b.clone();
                         delete_item.connect_activate(move |_| {
                             {
                                 let mut s = state_d.borrow_mut();
                                 update::update(&mut s, Message::CloseTabAt(idx));
                             }
-                            rebuild_tab_buttons(
-                                &state_d, &tab_bar_d, &expr_d, &result_d, &preview_d, &angle_d,
-                            );
-                            apply_update_display(
-                                &state_d, &expr_d, &result_d, &preview_d, &angle_d,
-                            );
+                            rebuild_tab_buttons(&state_d, &ctx_d);
+                            ctx_d.apply_display(&state_d);
                         });
                     }
 
@@ -1033,6 +1026,13 @@ fn wire_keyboard(
                         let mut s = state_c.borrow_mut();
                         update::update(&mut s, msg)
                     };
+                    let chord_ctx = TabCtx {
+                        tab_bar: tab_bar.clone(),
+                        expr: expr.clone(),
+                        result_l: result_l.clone(),
+                        preview: preview.clone(),
+                        angle_btn: angle_btn.clone(),
+                    };
                     for eff in &effects {
                         match eff {
                             SideEffect::UpdateDisplay => {
@@ -1041,9 +1041,7 @@ fn wire_keyboard(
                                 );
                             }
                             SideEffect::UpdateTabs => {
-                                rebuild_tab_buttons(
-                                    &state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn,
-                                );
+                                rebuild_tab_buttons(&state_c, &chord_ctx);
                             }
                             _ => {}
                         }
@@ -1073,15 +1071,20 @@ fn wire_keyboard(
             update::update(&mut s, msg)
         };
 
+        let key_ctx = TabCtx {
+            tab_bar: tab_bar.clone(),
+            expr: expr.clone(),
+            result_l: result_l.clone(),
+            preview: preview.clone(),
+            angle_btn: angle_btn.clone(),
+        };
         for eff in effects {
             match eff {
                 SideEffect::UpdateDisplay => {
                     apply_update_display(&state_c, &expr, &result_l, &preview, &angle_btn);
                 }
                 SideEffect::UpdateTabs => {
-                    rebuild_tab_buttons(
-                        &state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn,
-                    );
+                    rebuild_tab_buttons(&state_c, &key_ctx);
                 }
                 SideEffect::ToggleScientific(mode) => {
                     if mode {
@@ -1233,13 +1236,20 @@ fn wire_window_close(state: &Rc<RefCell<AppState>>, calc_ui: &CalculatorUI) {
         let result_l = calc_ui.result_label.clone();
         let preview = calc_ui.preview_label.clone();
         let angle_btn = calc_ui.angle_btn.clone();
+        let add_ctx = TabCtx {
+            tab_bar: tab_bar.clone(),
+            expr: expr.clone(),
+            result_l: result_l.clone(),
+            preview: preview.clone(),
+            angle_btn: angle_btn.clone(),
+        };
         calc_ui.tab_add_btn.connect_clicked(move |_| {
             {
                 let mut s = state_c.borrow_mut();
                 update::update(&mut s, Message::NewTab);
             }
-            rebuild_tab_buttons(&state_c, &tab_bar, &expr, &result_l, &preview, &angle_btn);
-            apply_update_display(&state_c, &expr, &result_l, &preview, &angle_btn);
+            rebuild_tab_buttons(&state_c, &add_ctx);
+            apply_update_display(&state_c, &add_ctx.expr, &add_ctx.result_l, &add_ctx.preview, &add_ctx.angle_btn);
         });
     }
 }

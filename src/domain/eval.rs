@@ -210,15 +210,13 @@ pub fn parse_expression(input: &str, plugins: &HashMap<String, String>) -> Resul
                     tokens.push(Token::Number(val));
                     tokens.push(Token::PostfixOp(PostfixOp::Percent));
                     i += 1;
+                } else if i < chars.len()
+                    && (chars[i] == '(' || chars[i].is_alphabetic() || chars[i] == '\u{03c0}')
+                {
+                    tokens.push(Token::Number(val));
+                    tokens.push(Token::BinaryOp(BinaryOp::Multiply));
                 } else {
-                    if i < chars.len()
-                        && (chars[i] == '(' || chars[i].is_alphabetic() || chars[i] == '\u{03c0}')
-                    {
-                        tokens.push(Token::Number(val));
-                        tokens.push(Token::BinaryOp(BinaryOp::Multiply));
-                    } else {
-                        tokens.push(Token::Number(val));
-                    }
+                    tokens.push(Token::Number(val));
                 }
             }
             '+' => { tokens.push(Token::BinaryOp(BinaryOp::Add)); i += 1; }
