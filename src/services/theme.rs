@@ -5,15 +5,15 @@ use gtk::{CssProvider, StyleContext, STYLE_PROVIDER_PRIORITY_APPLICATION};
 use crate::services::config::{FeedbackConfig, LayoutConfig, ThemeColors, ThemeConfig};
 
 const BASE_CSS: &str = r#"
-.display-area { padding: 16px 20px 8px 20px; min-height: 150px; }
-.expression-label { font-size: 16px; padding: 4px 4px; min-height: 22px; }
-.result-label { font-size: 56px; padding: 12px 4px; font-weight: 200; }
-.result-label.result-medium { font-size: 42px; }
-.result-label.result-small { font-size: 30px; }
+.display-area { padding: 10px 12px 4px 12px; }
+.expression-label { font-size: 16px; padding: 2px 4px; min-height: 120px; }
+.result-label { font-size: 52px; padding: 6px 4px; font-weight: 200; }
+.result-label.result-medium { font-size: 38px; }
+.result-label.result-small { font-size: 28px; }
 .preview-label { font-size: 14px; padding: 2px 4px; font-style: italic; min-height: 18px; }
-.calc-grid { margin: 4px 8px 8px 8px; }
-.sci-grid { margin: 4px 0 8px 8px; }
-button { font-size: 18px; padding: 10px; min-height: 44px; border-radius: 12px; }
+.calc-grid { margin: 2px 6px 6px 6px; }
+.sci-grid { margin: 2px 0 6px 6px; }
+button { font-size: 18px; padding: 8px; min-height: 40px; border-radius: 12px; }
 .op-button { font-size: 24px; font-weight: bold; }
 .equals-button { font-size: 24px; font-weight: bold; }
 .memory-button { font-size: 12px; min-height: 30px; padding: 4px; }

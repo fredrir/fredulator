@@ -267,27 +267,32 @@ pub fn build(config: &Config) -> CalculatorUI {
     expr_label.set_xalign(1.0);
     expr_label.set_hexpand(true);
     expr_label.set_selectable(false);
-    expr_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    expr_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+    expr_label.set_max_width_chars(1);
     expr_label.set_opacity(0.0);
 
     let result_label = Label::new(Some("0"));
     result_label.style_context().add_class("result-label");
     result_label.set_xalign(1.0);
     result_label.set_hexpand(true);
-    result_label.set_vexpand(true);
     result_label.set_selectable(false);
-    result_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    result_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+    result_label.set_max_width_chars(1);
 
     let preview_label = Label::new(Some(" "));
     preview_label.style_context().add_class("preview-label");
     preview_label.set_xalign(1.0);
     preview_label.set_hexpand(true);
     preview_label.set_selectable(false);
-    preview_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    preview_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+    preview_label.set_max_width_chars(1);
     preview_label.set_opacity(0.0);
 
     let display_box = gtk::Box::new(Orientation::Vertical, 0);
     display_box.style_context().add_class("display-area");
+    display_box.set_size_request(-1, 250);
+    display_box.set_vexpand(false);
+    display_box.set_vexpand_set(true);
     display_box.pack_start(&expr_label, false, false, 0);
     display_box.pack_start(&result_label, true, true, 0);
     display_box.pack_start(&preview_label, false, false, 0);

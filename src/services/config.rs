@@ -293,7 +293,7 @@ impl Default for WindowConfig {
             opacity: 1.0,
             remember_geometry: false,
             compact_mode: false,
-            default_width: 360,
+            default_width: 400,
             default_height: 580,
         }
     }
@@ -448,7 +448,7 @@ opacity = 1.0
 remember_geometry = false
 # Titlebar-less mode
 compact_mode = false
-default_width = 360
+default_width = 400
 default_height = 580
 
 # -- Plugins -------------------------------------------------------
@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(back.history.max_entries, 200);
         assert_eq!(back.layout.button_radius, 12);
         assert_eq!(back.theme.name, "native");
-        assert_eq!(back.window.default_width, 360);
+        assert_eq!(back.window.default_width, 400);
         assert_eq!(back.window.default_height, 580);
     }
 
