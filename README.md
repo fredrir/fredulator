@@ -4,7 +4,7 @@
 
 Vim motions, multi-tab workspaces, live expression preview, and 7 built-in themes, all from the keyboard without touching the mouse. Built for Linux with GTK 3.
 
-> 📸 _Screenshots coming soon — contributions welcome_
+> 📸 _Screenshots coming soon
 
 ---
 
